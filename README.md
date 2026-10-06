@@ -54,7 +54,7 @@ Built for **[ChatGPT Developer Mode](https://platform.openai.com/docs/guides/dev
 ```powershell
 git clone https://github.com/hoangcoderr/chatgpt-local-coder.git
 cd chatgpt-local-coder
-copy .env.example .env          # edit WORKSPACE_PATH + MCP_TOKEN
+copy .env.example .env          # edit DEFAULT_SHELL_CWD + MCP_TOKEN
 npm install
 npm run build
 .\start.ps1
@@ -68,7 +68,7 @@ cd chatgpt-local-coder
 cp .env.example .env
 npm install && npm run build
 
-# Set your project root and an auth token
+# Set your default shell cwd and an auth token
 node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"   # paste into MCP_TOKEN
 
 npm start
@@ -78,7 +78,7 @@ npm start
 
 Server runs at `http://127.0.0.1:3000` — health check: `http://127.0.0.1:3000/health`
 
-Set `WORKSPACE_PATH` to your project root (absolute path). With `MCP_TOKEN` set, the MCP endpoint becomes `/mcp/<token>` — that full path is what goes in the connector.
+Set `DEFAULT_SHELL_CWD` to the directory where shell-only/system work should start. Add and manage coding projects from **Admin UI → Projects**; persisted projects live in `profiles/projects.toml`. With `MCP_TOKEN` set, the MCP endpoint becomes `/mcp/<token>` — that full path is what goes in the connector.
 
 ## 🔌 Connect ChatGPT
 
@@ -243,6 +243,17 @@ Free sessions expire after **60 minutes** and the URL changes each time, so you 
 |------|-------------|
 | `agent_status` | Permissions, workspace roots, audit log |
 | `project_context` | Reads AGENTS.md, README, CLAUDE.md, configs |
+| `list_projects` | Lists registered projects and the current session's active project |
+| `use_project` | Changes the active project for the current MCP session only |
+
+### Skills
+
+| Tool | Description |
+|------|-------------|
+| `list_skills` | Dynamically lists active-project and global skills |
+| `load_skill` | Loads the full `SKILL.md`; project skill wins over the same-name global skill |
+
+Global skills come from `CHATGPT_GLOBAL_SKILLS_DIR` and remain available for both project work and shell/system work. Resolution is **project-first, global fallback**, and newly added skills are discovered without restarting the server.
 
 ### Filesystem
 
@@ -302,7 +313,8 @@ Copy `.env.example` → `.env`:
 PORT=3000
 HOST=127.0.0.1
 MCP_TOKEN=                      # generate one — see below
-WORKSPACE_PATH=C:\Users\You\projects\my-app     # macOS: /Users/you/projects/my-app
+DEFAULT_SHELL_CWD=C:\Users\You                    # macOS: /Users/you
+CHATGPT_GLOBAL_SKILLS_DIR=C:\Users\You\skills
 CHATGPT_AUTO_APPROVE=true
 SHELL_TIMEOUT=120
 MCP_SESSION_RECOVERY=true
@@ -315,7 +327,8 @@ OPENAI_TUNNEL_API_KEY=
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WORKSPACE_PATH` | `cwd` | **Your project root** (like `cd` before `claude`). Auto-loads `CLAUDE.md` / `AGENTS.md` into MCP instructions |
+| `DEFAULT_SHELL_CWD` | primary project / process cwd | Starting cwd for shell-only work when no active project applies. It is **not** a filesystem allowlist |
+| `CHATGPT_GLOBAL_SKILLS_DIR` | *(empty)* | Global skill folders. Each skill is `<name>/SKILL.md`; available to all projects and shell/system work |
 | `HOST` | `127.0.0.1` | Bind address. Keep as-is — `0.0.0.0` exposes the shell to your whole LAN |
 | `MCP_TOKEN` | *(empty)* | Secret in the endpoint path: `/mcp/<token>`. Empty = **no auth**. Generate: `node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"` |
 | `ADMIN_PORT` | `3001` | [Admin UI](#-admin-ui) port (localhost-only, always on). Change it if something else uses 3001 — Docker Desktop often does |
@@ -325,9 +338,15 @@ OPENAI_TUNNEL_API_KEY=
 | `SHELL_TIMEOUT` | `120` | Max seconds for `run_command` |
 | `FULL_DISK_ACCESS` | `true` | Access any path on the machine |
 
-> Variables already set in your shell **win over `.env`** (`dotenv` does not override). If a change to `.env` seems ignored, check `env | grep WORKSPACE_PATH` first.
+> Variables already set in your shell **win over `.env`** (`dotenv` does not override). If a change to `.env` seems ignored, check the corresponding exported variable first.
 
-> **Full machine access** is enabled by default. `WORKSPACE_PATH` only sets the default cwd — absolute paths like `D:\Projects\…` work everywhere.
+> **Full machine access** is enabled by default. An active project controls defaults/context, not access boundaries. Explicit absolute paths such as `/etc`, `/var`, `D:\Projects\…`, or another repo remain available subject to the OS user permissions.
+
+### Projects and compatibility
+
+Projects are persisted in `profiles/projects.toml`. The configured primary project becomes the default active project for a new MCP session, while `use_project` changes only the current session. Separate ChatGPT sessions can therefore work on different projects at the same time.
+
+Legacy `WORKSPACE_PATH` and `EXTRA_WORKSPACE_PATHS` remain supported as **legacy fallback/bootstrap inputs** when the registry has no projects. Once `profiles/projects.toml` contains registered projects, the registry is preferred. The server does not delete or rewrite those legacy values automatically. To persist a legacy project in the new model, add it through **Admin UI → Projects**.
 
 ## 🖥️ Admin UI
 
@@ -345,13 +364,15 @@ The exact URL is printed in the startup banner. Stopping the server stops the ad
 | **MCP Servers** | Enable/disable upstream MCP servers, test connections, inspect their tools |
 | **Import** | Pull existing MCP config from Cursor / Claude Code / OpenCode |
 | **Nhật ký** | Live tool-call log from ChatGPT (SSE stream) |
-| **Project** | Preview the exact MCP instructions injected into ChatGPT each session |
-| **Cài đặt** | Read **and write** `.env` |
+| **Projects** | Project cards, Add/Edit, primary selection, custom instruction, detected context and skill preferences |
+| **Cài đặt** | Machine/Shell, Global Context and Runtime settings |
 | **Raw status** | Raw JSON status dump |
 
 This is the **hub** side of the project: upstream MCP servers are proxied through this one connector, so ChatGPT reaches their tools without being wired up separately. Configure them in `MCP_UPSTREAM_CONFIG` (default `profiles/mcp-upstream.json`).
 
-> ⚠️ **Never expose this port through a tunnel** — only tunnel port 3000. The admin API writes `.env`, so reaching it means being able to change `WORKSPACE_PATH` or switch `MCP_TOKEN` off. It is protected by a loopback-only guard plus the optional `ADMIN_TOKEN`; since it cannot be disabled, setting `ADMIN_TOKEN` is worthwhile.
+> ⚠️ **Never expose this port through a tunnel** — only tunnel port 3000. The admin API writes global settings and the project registry. It is protected by a loopback-only guard plus the optional `ADMIN_TOKEN`; since it cannot be disabled, setting `ADMIN_TOKEN` is worthwhile.
+
+Removing a card uses **Remove from ChatGPT Coder**. This only unregisters the project from `profiles/projects.toml`; it does not delete or move the real folder.
 
 ## 🏗️ Architecture
 
@@ -378,7 +399,8 @@ src/
 
 ```powershell
 npm run build          # compile TypeScript
-npm test               # patch + tool unit tests
+npm test               # existing focused regressions
+npm run test:pws       # Project Workspace System verification matrix
 npm run dev            # watch mode (tsx)
 node scripts/test-mcp-session.mjs   # integration test (server must be running)
 ```
@@ -390,7 +412,7 @@ This server grants **full access to your machine** — files, shell, git. Only e
 - Binds `127.0.0.1` only (`HOST`) — not reachable from your LAN. The tunnel connects to localhost, so it still works
 - `MCP_TOKEN` guards the endpoint at `/mcp/<token>`; `/mcp` and `/` return 404. **Set it** — without it, anyone who learns your tunnel URL gets a shell
 - The connector URL contains the token — treat it as a credential, and stop the tunnel when you are done
-- `WORKSPACE_PATH` only sets the *default* cwd; it does **not** restrict access (`FULL_DISK_ACCESS` is on)
+- Active project and `DEFAULT_SHELL_CWD` set defaults/context only; they do **not** restrict full-machine access
 - The [Admin UI](#-admin-ui) is always running and can write `.env` — tunnel **only** port 3000, never `ADMIN_PORT`, and set `ADMIN_TOKEN`
 - `.env` and secrets are gitignored
 - Audit log: `.mcp-audit.log` (optional, configurable)
@@ -411,7 +433,7 @@ This server grants **full access to your machine** — files, shell, git. Only e
 | **404 on the connector URL** | You omitted the token. Use `https://<tunnel>/mcp/<MCP_TOKEN>`, not `/mcp`. |
 | **cloudflared never prints "Registered tunnel connection"** | Network blocks port 7844. `--protocol http2` will not help (same port). Use Pinggy — Option C. |
 | **`EADDRINUSE` on 3001 at startup** | Something else owns the admin port (often Docker Desktop). Set `ADMIN_PORT=3011`. |
-| **`.env` changes seem ignored** | A shell variable of the same name overrides it. Check `env \| grep WORKSPACE_PATH`. |
+| **`.env` changes seem ignored** | A shell variable of the same name overrides it. Check the corresponding exported variable with `env`. |
 | **`npm test` fails with `spawn bash ENOENT`** | Stale `.mcp-state` from a previous run. `rm -rf .mcp-state` and re-run. |
 | **`.bat` / `.ps1` scripts do nothing on macOS** | They are Windows-only. Use `npm start` and the Option B/C shell commands. |
 | **Access denied** | Wrong path or OS permissions on that file. |
@@ -474,9 +496,9 @@ Dùng Pinggy nếu mạng chặn cloudflared (cổng 7844). Nếu cloudflared ch
 3. Client ID & Secret để trống. Server đã tích hợp sẵn OAuth 2.1 shim tự động xử lý xác thực.
 
 
-**WORKSPACE_PATH:** đặt đúng thư mục project (không phải thư mục `chatgpt-local-coder`). Server tự đọc `CLAUDE.md` / `AGENTS.md` giống Claude Code.
+**Projects:** thêm project trong Admin UI → Projects. Registry nằm ở `profiles/projects.toml`; project active quyết định context/default cho session. `WORKSPACE_PATH` chỉ còn là legacy fallback khi registry chưa có project.
 
-**Admin UI:** tự bật cùng `npm start` tại `http://127.0.0.1:<ADMIN_PORT>/ui` (mặc định 3001), không tắt riêng được. Dùng để quản lý MCP server khác, xem log tool call, sửa `.env`. **Đừng tunnel cổng này ra ngoài** — chỉ tunnel :3000.
+**Admin UI:** tự bật cùng `npm start` tại `http://127.0.0.1:<ADMIN_PORT>/ui` (mặc định 3001), không tắt riêng được. Dùng để quản lý Projects, global/runtime settings, MCP server khác và log tool call. **Đừng tunnel cổng này ra ngoài** — chỉ tunnel :3000.
 
 **Lưu ý:** Không bấm **"Luôn cho phép"** trên popup — cấu hình quyền ở Settings → Apps. Sau khi restart server: Refresh connector + mở chat mới + tag lại connector.
 

@@ -4,6 +4,10 @@ export type ToolProfileName = "full" | "slim";
 export const SLIM_CHATGPT_TOOLS = new Set([
   "agent_status",
   "project_context",
+  "list_projects",
+  "use_project",
+  "list_skills",
+  "load_skill",
   "glob",
   "grep",
   "read_text_file",

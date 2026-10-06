@@ -73,7 +73,8 @@ async function buildTree(dirPath: string, depth: number, maxDepth: number): Prom
   return { name, type: "directory", children };
 }
 
-export function registerFilesystemTools(server: McpServer): void {
+export function registerFilesystemTools(server: McpServer, getProjectRoot: () => string): void {
+  const resolveProjectPath = (inputPath: string) => validatePath(inputPath, getProjectRoot());
   server.registerTool(
     "read_text_file",
     {
@@ -90,7 +91,7 @@ export function registerFilesystemTools(server: McpServer): void {
       annotations: toolAnnotations("read"),
     },
     async ({ path: filePath, offset, limit, head, tail }) => {
-      const validPath = await validatePath(filePath);
+      const validPath = await resolveProjectPath(filePath);
       const content = await fs.readFile(validPath, "utf-8");
       const lines = content.split("\n");
 
@@ -124,7 +125,7 @@ export function registerFilesystemTools(server: McpServer): void {
       annotations: toolAnnotations("read"),
     },
     async ({ path: filePath, offset, length }) => {
-      const validPath = await validatePath(filePath);
+      const validPath = await resolveProjectPath(filePath);
       const stat = await fs.stat(validPath);
       if (!stat.isFile()) throw new Error("Path is not a regular file");
       const start = Math.min(offset, stat.size);
@@ -163,7 +164,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ path: filePath, content }) => {
       requireWriteAllowed();
-      const validPath = await validatePath(filePath);
+      const validPath = await resolveProjectPath(filePath);
       const checkpointId = await checkpointBefore("write_file", [validPath]);
       await fs.mkdir(path.dirname(validPath), { recursive: true });
       await fs.writeFile(validPath, content, "utf-8");
@@ -187,7 +188,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ path: filePath, content }) => {
       requireWriteAllowed();
-      const validPath = await validatePath(filePath);
+      const validPath = await resolveProjectPath(filePath);
       const checkpointId = await checkpointBefore("write_file_base64", [validPath]);
       const buffer = Buffer.from(content, "base64");
       await fs.mkdir(path.dirname(validPath), { recursive: true });
@@ -214,7 +215,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ path: filePath, old_text, new_text, replace_all, dry_run }) => {
       requireWriteAllowed();
-      const validPath = await validatePath(filePath);
+      const validPath = await resolveProjectPath(filePath);
       const content = await fs.readFile(validPath, "utf-8");
       if (!content.includes(old_text)) throw new Error("old_text not found in file. Ensure exact match.");
       const newContent = replace_all ? content.split(old_text).join(new_text) : content.replace(old_text, new_text);
@@ -242,7 +243,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ path: filePath, edits, dry_run }) => {
       requireWriteAllowed();
-      const validPath = await validatePath(filePath);
+      const validPath = await resolveProjectPath(filePath);
       const original = await fs.readFile(validPath, "utf-8");
       let next = original;
       for (const edit of edits) {
@@ -273,7 +274,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ path: filePath, pattern, replacement, flags, dry_run }) => {
       requireWriteAllowed();
-      const validPath = await validatePath(filePath);
+      const validPath = await resolveProjectPath(filePath);
       const original = await fs.readFile(validPath, "utf-8");
       const regex = new RegExp(pattern, flags);
       const next = original.replace(regex, replacement);
@@ -306,7 +307,7 @@ export function registerFilesystemTools(server: McpServer): void {
       if (isMultiFilePatch(patch)) {
         let baseDir: string | undefined;
         if (filePath) {
-          const validPath = await validatePath(filePath);
+          const validPath = await resolveProjectPath(filePath);
           const stat = await fs.stat(validPath);
           baseDir = stat.isDirectory() ? validPath : path.dirname(validPath);
         }
@@ -334,7 +335,7 @@ export function registerFilesystemTools(server: McpServer): void {
       }
 
       if (!filePath) throw new Error("path is required for single-file patches");
-      const validPath = await validatePath(filePath);
+      const validPath = await resolveProjectPath(filePath);
       const original = await fs.readFile(validPath, "utf-8");
       const next = applyUnifiedPatchToText(original, patch);
       const diff = buildSimpleDiff(original, next);
@@ -359,7 +360,7 @@ export function registerFilesystemTools(server: McpServer): void {
       annotations: toolAnnotations("read"),
     },
     async ({ path: dirPath, ignore }) => {
-      const validPath = await validatePath(dirPath);
+      const validPath = await resolveProjectPath(dirPath);
       const entries = await fs.readdir(validPath, { withFileTypes: true });
       const ignoreMatchers = (ignore || []).map(
         (p) => new RegExp("^" + p.replace(/\./g, "\\.").replace(/\*/g, ".*").replace(/\?/g, ".") + "$", "i")
@@ -385,7 +386,7 @@ export function registerFilesystemTools(server: McpServer): void {
       annotations: toolAnnotations("read"),
     },
     async ({ pattern, path: searchPath, max_results }) => {
-      const validPath = searchPath ? await validatePath(searchPath) : (await import("../lib/path-security.js")).getAllowedRoots()[0];
+      const validPath = searchPath ? await resolveProjectPath(searchPath) : getProjectRoot();
       const matches = await globFiles(validPath, pattern, max_results);
       await audit({ tool: "glob", action: "glob", target: validPath, status: "ok", details: { pattern, results: matches.length } });
       return toolResult("glob", { path: validPath, pattern, matches: matches.map((m) => m.path), count: matches.length });
@@ -424,7 +425,7 @@ export function registerFilesystemTools(server: McpServer): void {
       context_after,
       context_around,
     }) => {
-      const validPath = searchPath ? await validatePath(searchPath) : (await import("../lib/path-security.js")).getAllowedRoots()[0];
+      const validPath = searchPath ? await resolveProjectPath(searchPath) : getProjectRoot();
       const output = await grepSearch({
         pattern,
         path: validPath,
@@ -453,7 +454,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ path: filePath }) => {
       requireWriteAllowed();
-      const validPath = await validatePath(filePath);
+      const validPath = await resolveProjectPath(filePath);
       const stat = await fs.stat(validPath);
       if (!stat.isFile()) throw new Error("Path is not a file");
       const checkpointId = await checkpointBefore("delete_file", [validPath]);
@@ -474,7 +475,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ path: dirPath }) => {
       requireWriteAllowed();
-      const validPath = await validatePath(dirPath);
+      const validPath = await resolveProjectPath(dirPath);
       await fs.mkdir(validPath, { recursive: true });
       await audit({ tool: "create_directory", action: "mkdir", target: validPath, status: "ok" });
       return toolResult("create_directory", { path: validPath });
@@ -493,7 +494,7 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ path: dirPath }) => {
       requireWriteAllowed();
-      const validPath = await validatePath(dirPath);
+      const validPath = await resolveProjectPath(dirPath);
       const stat = await fs.stat(validPath);
       if (!stat.isDirectory()) throw new Error("Path is not a directory");
       const checkpointId = await checkpointBefore("delete_directory", [validPath]);
@@ -518,8 +519,8 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ source, destination }) => {
       requireWriteAllowed();
-      const src = await validatePath(source);
-      const dest = await validatePath(destination);
+      const src = await resolveProjectPath(source);
+      const dest = await resolveProjectPath(destination);
       const stat = await fs.stat(src);
       if (!stat.isFile()) throw new Error("Source is not a file");
       const checkpointId = await checkpointBefore("copy_file", [dest]);
@@ -541,8 +542,8 @@ export function registerFilesystemTools(server: McpServer): void {
     },
     async ({ source, destination }) => {
       requireWriteAllowed();
-      const src = await validatePath(source);
-      const dest = await validatePath(destination);
+      const src = await resolveProjectPath(source);
+      const dest = await resolveProjectPath(destination);
       const checkpointId = await checkpointBefore("move_file", [src, dest]);
       await fs.mkdir(path.dirname(dest), { recursive: true });
       await fs.rename(src, dest);
@@ -552,7 +553,7 @@ export function registerFilesystemTools(server: McpServer): void {
   );
 
   server.registerTool("search_files", { title: "Search Files", description: "Search file contents for a text pattern.", inputSchema: { path: z.string(), pattern: z.string(), glob: z.string().optional().default("*"), max_results: z.number().optional().default(50) }, annotations: toolAnnotations("read") }, async ({ path: searchPath, pattern, glob: globPattern, max_results }) => {
-    const validPath = await validatePath(searchPath);
+    const validPath = await resolveProjectPath(searchPath);
     const results: string[] = [];
     await searchDirectory(validPath, new RegExp(pattern, "i"), globPattern, results, max_results);
     await audit({ tool: "search_files", action: "search", target: validPath, status: "ok", details: { pattern, results: results.length } });
@@ -560,7 +561,7 @@ export function registerFilesystemTools(server: McpServer): void {
   });
 
   server.registerTool("directory_tree", { title: "Directory Tree", description: "Get recursive directory structure as JSON.", inputSchema: { path: z.string(), max_depth: z.number().optional().default(4) }, annotations: toolAnnotations("read") }, async ({ path: dirPath, max_depth }) => {
-    const validPath = await validatePath(dirPath);
+    const validPath = await resolveProjectPath(dirPath);
     const tree = await buildTree(validPath, 0, max_depth);
     await audit({ tool: "directory_tree", action: "tree", target: validPath, status: "ok" });
     return toolResult("directory_tree", { path: validPath, tree, max_depth });
@@ -573,7 +574,7 @@ export function registerFilesystemTools(server: McpServer): void {
     return toolResult("list_allowed_directories", {
       full_machine_access: true,
       permission: describePermissionProfile(),
-      default_cwd: getDefaultCwd(),
+      default_cwd: getProjectRoot(),
       machine_roots: machineRoots,
     });
   });

@@ -1,7 +1,7 @@
 export const MCP_QUICKSTART = `
 ## Tool workflow (when agent_status is called)
-1. Project memory + git state are already in MCP instructions from WORKSPACE_PATH.
-2. Call project_context(path) only for a different repo than WORKSPACE_PATH.
+1. Project memory + git state are already in MCP instructions for the active project.
+2. Call project_context(path) when you need another repo's instruction/context without changing the active project.
 3. Explore with glob (file names) and grep (content), then read_text_file.
 4. Edit with apply_patch (preferred), multi_edit, or write_file for new files.
 5. Run builds/tests with run_command (short) or start_process + process_output (long).
@@ -35,7 +35,7 @@ All tools return JSON: { ok, tool, summary, data }
 *** End Patch
 
 ## Paths
-Full machine access — use ANY absolute path (C:\\, D:\\, etc.). Relative paths resolve from default cwd.
+Full machine access — use ANY absolute path (C:\\, D:\\, etc.). Project-tool relative paths resolve from the active project.
 `.trim();
 
 export function buildServerInstructions(

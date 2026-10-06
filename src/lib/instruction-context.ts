@@ -20,6 +20,9 @@ export interface InstructionContextOptions {
   workspaceRoots: string[];
   pid: number;
   adminPort: number;
+  defaultProjectInstruction?: string;
+  useDefaultProjectInstruction?: boolean;
+  projectInstruction?: string;
 }
 
 export interface InstructionContext {
@@ -40,6 +43,11 @@ export async function buildInstructionContext(
   ]);
 
   const profile = getChatGptToolProfile();
+  const defaultProjectInstruction =
+    opts.useDefaultProjectInstruction !== false
+      ? opts.defaultProjectInstruction?.trim()
+      : "";
+  const projectInstruction = opts.projectInstruction?.trim();
 
   const blocks = [
     CODEX_AGENT_PROMPT,
@@ -51,6 +59,12 @@ export async function buildInstructionContext(
       adminPort: opts.adminPort,
       nodeVersion: process.version,
     }),
+    defaultProjectInstruction
+      ? `## Default project instruction\n${defaultProjectInstruction}`
+      : "",
+    projectInstruction
+      ? `## Project instruction\n${projectInstruction}`
+      : "",
     formatGitSnapshotForInstructions(git),
     formatAutoMemoryForInstructions(autoMemory),
     formatProjectMemoryForInstructions(projectMemory),

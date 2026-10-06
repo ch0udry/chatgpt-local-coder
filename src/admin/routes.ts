@@ -18,6 +18,62 @@ import {
   subscribeActivity,
   type ActivityEntry,
 } from "../lib/activity-log.js";
+import {
+  createProjectConfig,
+  loadProjectRegistry,
+  resolvePrimaryProject,
+  resolveProjectRegistryPath,
+  saveProjectRegistry,
+  type ProjectConfig,
+  type ProjectRegistryFile,
+} from "../lib/project-registry.js";
+import { loadProjectMemory } from "../lib/project-memory.js";
+import { listAvailableSkills } from "../lib/skills-loader.js";
+
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await fs.access(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function requireProjectDirectory(projectPath: string): Promise<string> {
+  const resolved = path.resolve(projectPath);
+  try {
+    const info = await fs.stat(resolved);
+    if (!info.isDirectory()) throw new Error("not a directory");
+  } catch {
+    throw new Error(`Project path is not an existing directory: ${resolved}`);
+  }
+  return resolved;
+}
+
+async function detectProjectContext(projectPath: string) {
+  const [hasAgents, hasClaude, hasRules, hasSkills, hasGit] = await Promise.all([
+    pathExists(path.join(projectPath, "AGENTS.md")),
+    pathExists(path.join(projectPath, "CLAUDE.md")),
+    pathExists(path.join(projectPath, ".claude", "rules")),
+    pathExists(path.join(projectPath, ".claude", "skills")),
+    pathExists(path.join(projectPath, ".git")),
+  ]);
+  return {
+    has_agents: hasAgents,
+    has_claude: hasClaude,
+    has_rules: hasRules,
+    has_skills: hasSkills,
+    has_git: hasGit,
+  };
+}
+
+async function projectResponse(registry: ProjectRegistryFile, project: ProjectConfig) {
+  return {
+    ...project,
+    primary: resolvePrimaryProject(registry)?.id === project.id,
+    context: await detectProjectContext(project.path),
+  };
+}
 
 function parseDotEnv(text: string): Record<string, string> {
   const out: Record<string, string> = {};
@@ -67,9 +123,252 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
   sessionCount: () => number;
   instructionSummary?: () => Record<string, unknown>;
   instructionsPreview?: () => string;
+  projectRegistryPath?: string;
 }): Router {
   const router = Router();
   const envPath = path.resolve(process.cwd(), ".env");
+  const projectRegistryPath = options.projectRegistryPath ?? resolveProjectRegistryPath();
+
+  const registryError = (res: Response, err: unknown) => {
+    res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  };
+
+  router.get("/api/projects", async (_req, res) => {
+    try {
+      const registry = await loadProjectRegistry(projectRegistryPath);
+      const projects = await Promise.all(
+        registry.projects.map((project) => projectResponse(registry, project))
+      );
+      res.json({
+        ok: true,
+        primary_project: resolvePrimaryProject(registry)?.id ?? null,
+        projects,
+      });
+    } catch (err) {
+      registryError(res, err);
+    }
+  });
+
+  router.post("/api/projects", async (req, res) => {
+    try {
+      const registry = await loadProjectRegistry(projectRegistryPath);
+      const projectPath = await requireProjectDirectory(String(req.body?.path ?? ""));
+      const project = createProjectConfig(registry, {
+        name: String(req.body?.name ?? ""),
+        path: projectPath,
+        use_default_instruction: req.body?.use_default_instruction,
+        instruction: req.body?.instruction,
+        pinned_skills: req.body?.pinned_skills,
+      });
+      const next = { ...registry, projects: [...registry.projects, project] };
+      await saveProjectRegistry(next, projectRegistryPath);
+      res.json({ ok: true, project: await projectResponse(next, project) });
+    } catch (err) {
+      registryError(res, err);
+    }
+  });
+
+  router.get("/api/projects/config", async (_req, res) => {
+    try {
+      const registry = await loadProjectRegistry(projectRegistryPath);
+      res.json({
+        ok: true,
+        path: projectRegistryPath,
+        config: {
+          primary_project: registry.primary_project ?? null,
+          default_project_instruction: registry.default_project_instruction,
+        },
+      });
+    } catch (err) {
+      registryError(res, err);
+    }
+  });
+
+  router.put("/api/projects/config", async (req, res) => {
+    try {
+      const registry = await loadProjectRegistry(projectRegistryPath);
+      const body = req.body?.config ?? req.body ?? {};
+      const next: ProjectRegistryFile = {
+        ...registry,
+        default_project_instruction:
+          body.default_project_instruction === undefined
+            ? registry.default_project_instruction
+            : String(body.default_project_instruction),
+      };
+
+      if (body.primary_project !== undefined) {
+        const requested =
+          body.primary_project === null ? "" : String(body.primary_project).trim();
+        if (requested && !registry.projects.some((project) => project.id === requested)) {
+          throw new Error(`Primary project not found: ${requested}`);
+        }
+        if (requested) next.primary_project = requested;
+        else delete next.primary_project;
+      }
+
+      await saveProjectRegistry(next, projectRegistryPath);
+      res.json({
+        ok: true,
+        config: {
+          primary_project: next.primary_project ?? null,
+          default_project_instruction: next.default_project_instruction,
+        },
+      });
+    } catch (err) {
+      registryError(res, err);
+    }
+  });
+
+  router.get("/api/projects/:id", async (req, res) => {
+    try {
+      const registry = await loadProjectRegistry(projectRegistryPath);
+      const project = registry.projects.find((entry) => entry.id === req.params.id);
+      if (!project) {
+        res.status(404).json({ ok: false, error: "Project not found" });
+        return;
+      }
+      res.json({ ok: true, project: await projectResponse(registry, project) });
+    } catch (err) {
+      registryError(res, err);
+    }
+  });
+
+  router.put("/api/projects/:id", async (req, res) => {
+    try {
+      const registry = await loadProjectRegistry(projectRegistryPath);
+      const index = registry.projects.findIndex((entry) => entry.id === req.params.id);
+      if (index < 0) {
+        res.status(404).json({ ok: false, error: "Project not found" });
+        return;
+      }
+      const current = registry.projects[index];
+      const nextPath =
+        req.body?.path === undefined
+          ? current.path
+          : await requireProjectDirectory(String(req.body.path));
+      const updated: ProjectConfig = {
+        ...current,
+        name: req.body?.name === undefined ? current.name : String(req.body.name),
+        path: nextPath,
+        use_default_instruction:
+          req.body?.use_default_instruction === undefined
+            ? current.use_default_instruction
+            : req.body.use_default_instruction !== false,
+        instruction:
+          req.body?.instruction === undefined ? current.instruction : String(req.body.instruction),
+        pinned_skills:
+          req.body?.pinned_skills === undefined
+            ? current.pinned_skills
+            : req.body.pinned_skills,
+      };
+      const projects = [...registry.projects];
+      projects[index] = updated;
+      const next = { ...registry, projects };
+      await saveProjectRegistry(next, projectRegistryPath);
+      const saved = (await loadProjectRegistry(projectRegistryPath)).projects.find(
+        (entry) => entry.id === req.params.id
+      )!;
+      res.json({ ok: true, project: await projectResponse(next, saved) });
+    } catch (err) {
+      registryError(res, err);
+    }
+  });
+
+  router.delete("/api/projects/:id", async (req, res) => {
+    try {
+      const registry = await loadProjectRegistry(projectRegistryPath);
+      const removed = registry.projects.find((entry) => entry.id === req.params.id);
+      if (!removed) {
+        res.status(404).json({ ok: false, error: "Project not found" });
+        return;
+      }
+      const projects = registry.projects.filter((entry) => entry.id !== req.params.id);
+      const next: ProjectRegistryFile = { ...registry, projects };
+      if (next.primary_project === removed.id) {
+        if (projects.length) next.primary_project = projects[0].id;
+        else delete next.primary_project;
+      }
+      await saveProjectRegistry(next, projectRegistryPath);
+      res.json({
+        ok: true,
+        removed_project_id: removed.id,
+        files_deleted: false,
+        config: {
+          primary_project: next.primary_project ?? null,
+          default_project_instruction: next.default_project_instruction,
+        },
+      });
+    } catch (err) {
+      registryError(res, err);
+    }
+  });
+
+  router.put("/api/projects/:id/primary", async (req, res) => {
+    try {
+      const registry = await loadProjectRegistry(projectRegistryPath);
+      if (!registry.projects.some((entry) => entry.id === req.params.id)) {
+        res.status(404).json({ ok: false, error: "Project not found" });
+        return;
+      }
+      const next = { ...registry, primary_project: req.params.id };
+      await saveProjectRegistry(next, projectRegistryPath);
+      res.json({
+        ok: true,
+        config: {
+          primary_project: next.primary_project,
+          default_project_instruction: next.default_project_instruction,
+        },
+      });
+    } catch (err) {
+      registryError(res, err);
+    }
+  });
+
+  router.get("/api/projects/:id/inspect", async (req, res) => {
+    try {
+      const registry = await loadProjectRegistry(projectRegistryPath);
+      const project = registry.projects.find((entry) => entry.id === req.params.id);
+      if (!project) {
+        res.status(404).json({ ok: false, error: "Project not found" });
+        return;
+      }
+      const memory = await loadProjectMemory(project.path, {
+        workspaceRoots: registry.projects.map((entry) => entry.path),
+      });
+      res.json({
+        ok: true,
+        project: await projectResponse(registry, project),
+        memory,
+      });
+    } catch (err) {
+      registryError(res, err);
+    }
+  });
+
+  router.get("/api/projects/:id/skills", async (req, res) => {
+    try {
+      const registry = await loadProjectRegistry(projectRegistryPath);
+      const project = registry.projects.find((entry) => entry.id === req.params.id);
+      if (!project) {
+        res.status(404).json({ ok: false, error: "Project not found" });
+        return;
+      }
+      const [effective, globalSkills] = await Promise.all([
+        listAvailableSkills({ id: project.id, root: project.path }),
+        listAvailableSkills(null),
+      ]);
+      res.json({
+        ok: true,
+        project_id: project.id,
+        project_skills: effective.filter((skill) => skill.source === "project"),
+        global_skills: globalSkills,
+        effective_skills: effective,
+        pinned_skills: project.pinned_skills,
+      });
+    } catch (err) {
+      registryError(res, err);
+    }
+  });
 
   router.get("/health", async (_req: Request, res: Response) => {
     const upstream = await manager.listStatuses();

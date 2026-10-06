@@ -11,8 +11,20 @@ MCP server local giống Codex: đọc/ghi file, chạy lệnh, git. Dùng với
 
 - **Full machine access** — không giới hạn path, không chặn lệnh
 - Dùng absolute path bất kỳ: `C:\`, `D:\Projects\...` (Windows) · `/Users/you/projects/...` (macOS) · `/home/you/...` (Linux)
-- `WORKSPACE_PATH` chỉ là thư mục mặc định cho path tương đối và shell/git
+- Project registry nằm ở `profiles/projects.toml`; project active là default/context cho project-aware tools
+- `DEFAULT_SHELL_CWD` là cwd mặc định cho shell/system work khi không có active project phù hợp; không phải security boundary
+- `WORKSPACE_PATH` / `EXTRA_WORKSPACE_PATHS` chỉ là legacy fallback/bootstrap khi registry chưa có project
 - `CHATGPT_AUTO_APPROVE=true` — giảm popup xác nhận trên ChatGPT
+
+## Projects + skills
+
+- `list_projects` — xem project đã đăng ký, primary và active project của session hiện tại
+- `use_project` — đổi active project **chỉ cho MCP session hiện tại**; không đổi primary global
+- `project_context` — inspect project context; không tự đổi active project
+- `list_skills` — list skill động từ active project + global directory
+- `load_skill` — load full `SKILL.md`
+- Skill resolution là **project-first, global fallback**: `<active-project>/.claude/skills/<name>/SKILL.md` thắng cùng tên trong `CHATGPT_GLOBAL_SKILLS_DIR`
+- Global skill luôn dùng được cho project work và shell/system work; skill mới không cần restart server
 
 ## ChatGPT: tránh popup + lỗi "Luôn cho phép phải kết nối lại"
 
@@ -138,7 +150,7 @@ Dùng `dry_run: true` để xem diff trước khi ghi.
 ## Đường dẫn file
 
 - Dùng path tuyệt đối: `C:\Users\...\project\src\file.ts` · `/Users/you/project/src/file.ts`
-- Hoặc relative từ `WORKSPACE_PATH` trong `.env`
+- Relative project paths mặc định theo active project; shell-only work mặc định theo `DEFAULT_SHELL_CWD`
 - Gọi `agent_status` để xem workspace roots (`list_allowed_directories` chỉ có ở profile `full`)
 
 ## Khởi động server

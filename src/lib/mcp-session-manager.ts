@@ -8,6 +8,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createMcpServer } from "../server-factory.js";
+import { buildInstructionContext } from "./instruction-context.js";
 import { getUpstreamManager } from "./mcp-upstream-manager.js";
 
 
@@ -70,21 +71,39 @@ function negotiateProtocolVersion(requested: string | undefined): string {
 export interface McpSession {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
+  projectState: {
+    activeProjectId: string | null;
+    root: string;
+  };
+  readonly activeProjectId: string | null;
   lastAccessedAt: number;
   createdAt: number;
 }
 
 export interface SessionManagerConfig {
   workspaceRoot: string;
+  defaultShellCwd: string;
   shellTimeout: number;
   workspaceRoots: string[];
+  projects?: Array<{
+    id: string;
+    name?: string;
+    path: string;
+    use_default_instruction?: boolean;
+    instruction?: string;
+  }>;
   port: number;
+  primaryProjectId?: string | null;
+  defaultProjectInstruction?: string;
+  pid?: number;
+  adminPort?: number;
   projectMemoryInstructions?: string;
 }
 
 export interface SessionManager {
   get(sessionId: string): McpSession | undefined;
   getMostRecent(): McpSession | undefined;
+  setActiveProject(sessionId: string, projectId: string | null): void;
   touch(sessionId: string): void;
   count(): number;
   createNew(req: Request, res: Response, body: unknown): Promise<void>;
@@ -163,6 +182,30 @@ export function createSessionManager(config: SessionManagerConfig): SessionManag
   const activeGetSessions = new Set<string>();
   let cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
+  function projectRoot(projectId: string | null): string {
+    if (!projectId) return config.defaultShellCwd;
+    const configured = config.projects?.find((project) => project.id === projectId);
+    if (configured) return configured.path;
+    if (!config.projects?.length) return config.workspaceRoot;
+    throw new Error(`Project not registered: ${projectId}`);
+  }
+
+  async function projectInstructions(projectId: string | null, root: string): Promise<string | undefined> {
+    const project = config.projects?.find((entry) => entry.id === projectId);
+    if (!project) return config.projectMemoryInstructions;
+
+    const context = await buildInstructionContext({
+      workspaceRoot: root,
+      workspaceRoots: config.workspaceRoots,
+      pid: config.pid ?? process.pid,
+      adminPort: config.adminPort ?? 0,
+      defaultProjectInstruction: config.defaultProjectInstruction,
+      useDefaultProjectInstruction: project.use_default_instruction !== false,
+      projectInstruction: project.instruction,
+    });
+    return context.instructionsText;
+  }
+
   function touch(sessionId: string): void {
     cancelDeleteGrace(sessionId);
     const session = sessions[sessionId];
@@ -227,13 +270,37 @@ export function createSessionManager(config: SessionManagerConfig): SessionManag
   }
 
   async function buildSession(preferredSessionId?: string): Promise<McpSession> {
+    const projectState = {
+      activeProjectId: config.primaryProjectId ?? null,
+      root: projectRoot(config.primaryProjectId ?? null),
+    };
+    const instructions = await projectInstructions(projectState.activeProjectId, projectState.root);
+    const setSessionProject = (projectId: string) => {
+      projectState.activeProjectId = projectId;
+      projectState.root = projectRoot(projectId);
+    };
     const mcpServer = await createMcpServer(
       config.workspaceRoot,
       config.shellTimeout,
       config.workspaceRoots,
       true,
       getUpstreamManager(),
-      config.projectMemoryInstructions
+      instructions,
+      () => projectState.root,
+      () => projectState.activeProjectId ? projectState.root : config.defaultShellCwd,
+      () => projectState.activeProjectId
+        ? { id: projectState.activeProjectId, root: projectState.root }
+        : null,
+      {
+        projects: (config.projects ?? []).map((project) => ({
+          id: project.id,
+          name: project.name ?? project.id,
+          path: project.path,
+        })),
+        primaryProjectId: config.primaryProjectId ?? null,
+        setActiveProject: setSessionProject,
+        getProjectInstructions: projectInstructions,
+      }
     );
 
     const transport = new StreamableHTTPServerTransport({
@@ -242,10 +309,16 @@ export function createSessionManager(config: SessionManagerConfig): SessionManag
         : () => randomUUID(),
       enableJsonResponse: true,
       onsessioninitialized: (sid) => {
-        const existing = sessions[sid];
+        const existing = sessions[sid] ?? pendingRecoveries[sid];
+        projectState.activeProjectId = existing?.activeProjectId ?? config.primaryProjectId ?? null;
+        projectState.root = projectRoot(projectState.activeProjectId);
         sessions[sid] = {
           transport,
           server: mcpServer,
+          projectState,
+          get activeProjectId() {
+            return projectState.activeProjectId;
+          },
           lastAccessedAt: Date.now(),
           createdAt: existing?.createdAt ?? Date.now(),
         };
@@ -278,6 +351,10 @@ export function createSessionManager(config: SessionManagerConfig): SessionManag
       sessions[sid] ?? {
         transport,
         server: mcpServer,
+        projectState,
+        get activeProjectId() {
+          return projectState.activeProjectId;
+        },
         lastAccessedAt: Date.now(),
         createdAt: Date.now(),
       }
@@ -343,6 +420,13 @@ export function createSessionManager(config: SessionManagerConfig): SessionManag
         }
       }
       return latest;
+    },
+
+    setActiveProject(sessionId: string, projectId: string | null) {
+      const session = sessions[sessionId];
+      if (!session) throw new Error(`Session not found: ${sessionId}`);
+      session.projectState.activeProjectId = projectId;
+      session.projectState.root = projectRoot(projectId);
     },
 
     touch,

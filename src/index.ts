@@ -24,6 +24,11 @@ import {
 } from "./lib/instruction-context.js";
 import { getChatGptToolProfile } from "./lib/tool-profile.js";
 import { createOAuthShimRouter } from "./lib/oauth-shim.js";
+import {
+  bootstrapLegacyProjects,
+  loadProjectRegistry,
+  resolvePrimaryProject,
+} from "./lib/project-registry.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
 const HOST = process.env.HOST || "127.0.0.1";
@@ -34,29 +39,17 @@ const SHELL_TIMEOUT = parseInt(process.env.SHELL_TIMEOUT || "120", 10);
 const SESSION_RECOVERY =
   (process.env.MCP_SESSION_RECOVERY || "true").toLowerCase() !== "false";
 
-function splitWorkspaceEnv(value: string | undefined): string[] {
-  if (!value) return [];
-  return value
-    .split(";")
-    .map((p) => p.trim().replace(/^['\"]|['\"]$/g, ""))
-    .filter(Boolean);
-}
-
-function resolveWorkspaceRoots(): string[] {
-  const configuredRoots = [
-    ...splitWorkspaceEnv(process.env.WORKSPACE_PATH || process.cwd()),
-    ...splitWorkspaceEnv(process.env.EXTRA_WORKSPACE_PATHS),
-    ...splitWorkspaceEnv(process.env.WORKSPACE_PATHS),
-    ...splitWorkspaceEnv(process.env.ALLOWED_WORKSPACE_PATHS),
-  ];
-
-  const roots = configuredRoots.map((p) => path.resolve(p));
-  return [...new Set(roots)];
-}
-
-const workspaceRoots = resolveWorkspaceRoots();
-const workspaceRoot = workspaceRoots[0] || process.cwd();
-setDefaultCwd(workspaceRoot);
+const loadedProjectRegistry = await loadProjectRegistry();
+const projectRegistry =
+  loadedProjectRegistry.projects.length > 0
+    ? loadedProjectRegistry
+    : bootstrapLegacyProjects(process.env);
+const primaryProject = resolvePrimaryProject(projectRegistry);
+const workspaceRoots = projectRegistry.projects.map((project) => project.path);
+const workspaceRoot =
+  primaryProject?.path ?? path.resolve(process.env.WORKSPACE_PATH || process.cwd());
+const defaultShellCwd = path.resolve(process.env.DEFAULT_SHELL_CWD || workspaceRoot);
+setDefaultCwd(defaultShellCwd);
 
 const upstreamManager = await initUpstreamManager();
 const stopContextEngineDiscovery = await startContextEngineDiscovery(upstreamManager);
@@ -87,9 +80,15 @@ console.log(`[MCP] Tool profile: ${getChatGptToolProfile()} (CHATGPT_TOOL_PROFIL
 
 const sessionManager = createSessionManager({
   workspaceRoot,
+  defaultShellCwd,
   shellTimeout: SHELL_TIMEOUT,
   workspaceRoots,
+  projects: projectRegistry.projects,
   port: PORT,
+  primaryProjectId: primaryProject?.id ?? null,
+  defaultProjectInstruction: projectRegistry.default_project_instruction,
+  pid: process.pid,
+  adminPort: ADMIN_PORT,
   projectMemoryInstructions: instructionContext.instructionsText,
 });
 
@@ -382,7 +381,7 @@ const server = app.listen(PORT, HOST, () => {
   console.log(`  MCP tokens: ${MCP_TOKENS.length}`);
   console.log(`  Health:    http://${HOST}:${PORT}/health`);
   console.log(`  Admin UI:  http://127.0.0.1:${ADMIN_PORT}/ui`);
-  console.log(`  Default cwd: ${workspaceRoot}`);
+  console.log(`  Default cwd: ${defaultShellCwd}`);
   console.log(`  Full machine access: ON (no path restrictions)`);
   console.log(`  Session recovery: ${SESSION_RECOVERY ? "ON" : "OFF"}`);
   console.log(`  Auth:      ${MCP_TOKENS.length > 0 ? "ON (token in URL path)" : "OFF — dat MCP_TOKEN trong .env!"}`);

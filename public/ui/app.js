@@ -1,6 +1,6 @@
 const ENV_KEYS = [
-  "WORKSPACE_PATH",
-  "EXTRA_WORKSPACE_PATHS",
+  "DEFAULT_SHELL_CWD",
+  "CHATGPT_GLOBAL_SKILLS_DIR",
   "PORT",
   "ADMIN_PORT",
   "CHATGPT_AUTO_APPROVE",
@@ -11,13 +11,58 @@ const ENV_KEYS = [
   "POST_EDIT_HOOKS_CONFIG",
 ];
 
+const ENV_FIELDS = {
+  DEFAULT_SHELL_CWD: {
+    label: "Default Shell CWD",
+    group: "machine",
+    help: "Restart required. Used when no project is active.",
+  },
+  SHELL_TIMEOUT: {
+    label: "Shell Timeout (seconds)",
+    group: "machine",
+    help: "Restart required.",
+  },
+  CHATGPT_GLOBAL_SKILLS_DIR: {
+    label: "Global Skills Directory",
+    group: "global",
+    help: "Applies to subsequent skill discovery calls after save.",
+  },
+  PORT: { label: "MCP Port", group: "runtime", help: "Restart required." },
+  ADMIN_PORT: { label: "Admin Port", group: "runtime", help: "Restart required." },
+  CHATGPT_AUTO_APPROVE: {
+    label: "Auto Approve",
+    group: "runtime",
+    help: "Applies to subsequent tool registrations/calls.",
+  },
+  CHATGPT_TOOL_PROFILE: {
+    label: "Tool Profile",
+    group: "runtime",
+    help: "Applies to new MCP sessions.",
+  },
+  CHECKPOINT_ENABLED: {
+    label: "Checkpoints Enabled",
+    group: "runtime",
+    help: "Applies to subsequent checkpoint operations.",
+  },
+  MCP_UPSTREAM_CONFIG: {
+    label: "Upstream Config Path",
+    group: "runtime",
+    help: "Restart required to change the manager config path.",
+  },
+  POST_EDIT_HOOKS_CONFIG: {
+    label: "Post-edit Hooks Config",
+    group: "runtime",
+    help: "Applies to subsequent post-edit hook loads.",
+  },
+};
+
 const TITLES = {
-  dashboard: "Tổng quan",
+  dashboard: "Overview",
   servers: "MCP Servers",
   import: "Import",
-  activity: "Nhật ký",
-  project: "Project context",
-  settings: "Cài đặt",
+  activity: "Activity",
+  project: "Projects",
+  settings: "Settings",
   logs: "Raw status",
 };
 
@@ -33,6 +78,7 @@ let activityPollTimer = null;
 let activityEventSource = null;
 let activitySeenIds = new Set();
 let activityPaused = false;
+let editingProjectId = null;
 let adminToken = sessionStorage.getItem("admin-token") || "";
 
 function toast(msg, isError = false) {
@@ -86,7 +132,7 @@ function esc(s) {
 }
 
 function serversTable(rows, { actions = true } = {}) {
-  if (!rows.length) return '<div class="empty">Chưa có upstream server. Thêm mới hoặc Import.</div>';
+  if (!rows.length) return '<div class="empty">No upstream servers. Add one or import a configuration.</div>';
   const head = `<table><thead><tr>
     <th>Server</th><th>Transport</th><th>Status</th><th>Expose</th><th>Tools</th>
     ${actions ? "<th></th>" : ""}
@@ -97,8 +143,8 @@ function serversTable(rows, { actions = true } = {}) {
         ? `<td><div class="btn-group">
             <button class="btn sm ghost" data-action="test" data-id="${esc(s.id)}">Test</button>
             <button class="btn sm ghost" data-action="tools" data-id="${esc(s.id)}">Tools</button>
-            <button class="btn sm ghost" data-action="edit" data-id="${esc(s.id)}">Sửa</button>
-            <button class="btn sm ghost" data-action="delete" data-id="${esc(s.id)}">Xóa</button>
+            <button class="btn sm ghost" data-action="edit" data-id="${esc(s.id)}">Edit</button>
+            <button class="btn sm ghost" data-action="delete" data-id="${esc(s.id)}">Delete</button>
           </div></td>`
         : "";
       return `<tr>
@@ -133,16 +179,121 @@ async function loadDashboard() {
 }
 
 async function loadProject() {
-  const preview = await api("/api/instructions/preview");
-  const s = preview.summary || {};
-  document.getElementById("project-meta").innerHTML = `
-    <div class="stat"><div class="stat-label">Root</div><div class="stat-value" style="font-size:0.8rem">${esc(s.root || "—")}</div></div>
-    <div class="stat"><div class="stat-label">Memory files</div><div class="stat-value">${s.memory_files?.length ?? 0}</div></div>
-    <div class="stat"><div class="stat-label">Instructions</div><div class="stat-value">${preview.total_chars ? Math.round(preview.total_chars / 1024) + " KB" : "—"}</div></div>
-    <div class="stat"><div class="stat-label">Tool profile</div><div class="stat-value">${esc(s.tool_profile || "slim")}</div></div>
-    <div class="stat"><div class="stat-label">Git</div><div class="stat-value">${esc(s.git?.branch || "—")}</div></div>`;
-  document.getElementById("project-preview").textContent =
-    preview.preview + (preview.truncated ? "\n\n… (truncated)" : "");
+  const data = await api("/api/projects");
+  const grid = document.getElementById("projects-grid");
+  if (!data.projects.length) {
+    grid.innerHTML = '<div class="empty">No projects registered. Add a project to begin.</div>';
+    return;
+  }
+  grid.innerHTML = data.projects.map((project) => {
+    const c = project.context || {};
+    const indicators = [
+      ["Git", c.has_git],
+      ["AGENTS", c.has_agents],
+      ["CLAUDE", c.has_claude],
+      ["Rules", c.has_rules],
+      ["Skills", c.has_skills],
+    ].map(([label, on]) => `<span class="context-indicator${on ? " on" : ""}">${label}</span>`).join("");
+    return `<article class="project-card" data-project-id="${esc(project.id)}">
+      <div class="project-card-head">
+        <div class="project-title-wrap">
+          <strong>${esc(project.name)}</strong>
+          ${project.primary ? '<span class="badge ok">Primary</span>' : ""}
+        </div>
+        <div class="project-path">${esc(project.path)}</div>
+      </div>
+      <div class="project-context">${indicators}</div>
+      <div class="project-actions">
+        <button class="btn sm ghost" data-project-action="edit" data-id="${esc(project.id)}">Edit</button>
+        ${project.primary ? "" : `<button class="btn sm ghost" data-project-action="primary" data-id="${esc(project.id)}">Set Primary</button>`}
+        <button class="btn sm ghost" data-project-action="remove" data-id="${esc(project.id)}">Remove from ChatGPT Coder</button>
+      </div>
+    </article>`;
+  }).join("");
+  bindProjectActions(grid);
+}
+
+function bindProjectActions(container) {
+  container.querySelectorAll("[data-project-action]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.id;
+      try {
+        if (btn.dataset.projectAction === "edit") {
+          await openProjectEditor(id);
+        } else if (btn.dataset.projectAction === "primary") {
+          await api(`/api/projects/${id}/primary`, { method: "PUT" });
+          toast("Primary project updated");
+          await loadProject();
+        } else if (btn.dataset.projectAction === "remove") {
+          if (!confirm("Remove from ChatGPT Coder? Project files and folders on disk will not be deleted.")) return;
+          await api(`/api/projects/${id}`, { method: "DELETE" });
+          toast("Project removed from ChatGPT Coder");
+          await loadProject();
+        }
+      } catch (err) {
+        toast(err.message, true);
+      }
+    });
+  });
+}
+
+function renderProjectContext(project) {
+  const c = project.context || {};
+  document.getElementById("project-context-summary").innerHTML = [
+    ["Git", c.has_git],
+    ["AGENTS", c.has_agents],
+    ["CLAUDE", c.has_claude],
+    ["Rules", c.has_rules],
+    ["Skills", c.has_skills],
+  ].map(([label, on]) => `<span class="context-indicator${on ? " on" : ""}">${label}</span>`).join("");
+}
+
+function renderProjectSkills(data) {
+  const projectList = document.getElementById("project-skills-list");
+  const globalList = document.getElementById("global-skills-list");
+  projectList.innerHTML = data.project_skills.length
+    ? data.project_skills.map((skill) => `
+        <div class="skill-row">
+          <div><span class="skill-source project">Project</span><strong>${esc(skill.name)}</strong></div>
+          <div class="skill-description">${esc(skill.description || "")}</div>
+        </div>`).join("")
+    : '<div class="muted">No project skills detected.</div>';
+
+  const pinned = new Set(data.pinned_skills || []);
+  globalList.innerHTML = data.global_skills.length
+    ? data.global_skills.map((skill) => `
+        <label class="skill-row skill-pinnable">
+          <div>
+            <input type="checkbox" data-pinned-skill="${esc(skill.name)}" ${pinned.has(skill.name) ? "checked" : ""} />
+            <span class="skill-source global">Global</span><strong>${esc(skill.name)}</strong>
+          </div>
+          <div class="skill-description">${esc(skill.description || "")}</div>
+        </label>`).join("")
+    : '<div class="muted">No global skills configured.</div>';
+}
+
+async function loadProjectEditorSkills(id) {
+  const data = await api(`/api/projects/${id}/skills`);
+  renderProjectSkills(data);
+}
+
+async function openProjectEditor(id) {
+  editingProjectId = id;
+  const [inspect, skills] = await Promise.all([
+    api(`/api/projects/${id}/inspect`),
+    api(`/api/projects/${id}/skills`),
+  ]);
+  const project = inspect.project;
+  const form = document.getElementById("project-edit-form");
+  form.elements.namedItem("name").value = project.name || "";
+  form.elements.namedItem("path").value = project.path || "";
+  form.elements.namedItem("use_default_instruction").checked =
+    project.use_default_instruction !== false;
+  form.elements.namedItem("instruction").value = project.instruction || "";
+  document.getElementById("project-edit-title").textContent = `Edit: ${project.name}`;
+  renderProjectContext(project);
+  renderProjectSkills(skills);
+  document.getElementById("project-edit-dialog").showModal();
 }
 
 async function loadServers() {
@@ -169,14 +320,14 @@ function bindServerActions(container, config) {
           const list = document.getElementById("tools-list");
           list.innerHTML = r.tools.length
             ? r.tools.map((t) => `<div class="tool-row"><div class="name">${esc(t.name)}</div><div class="desc">${esc(t.description || "")}</div></div>`).join("")
-            : '<div class="muted">Không có tools</div>';
+            : '<div class="muted">No tools available</div>';
           document.getElementById("tools-dialog").showModal();
         } else if (action === "edit") {
           openServerDialog(config.servers.find((x) => x.id === id));
         } else if (action === "delete") {
-          if (!confirm(`Xóa server "${id}"?`)) return;
+          if (!confirm(`Delete server "${id}"?`)) return;
           await api(`/api/upstream/${id}`, { method: "DELETE" });
-          toast("Đã xóa");
+          toast("Deleted");
           await loadServers();
         }
       } catch (err) {
@@ -190,7 +341,7 @@ async function loadImport() {
   const { sources } = await api("/api/import/sources");
   const grid = document.getElementById("import-grid");
   if (!sources.length) {
-    grid.innerHTML = '<div class="empty">Không tìm thấy config MCP trên máy.</div>';
+    grid.innerHTML = '<div class="empty">No MCP configurations found on this machine.</div>';
     return;
   }
   grid.innerHTML = sources
@@ -210,7 +361,7 @@ async function loadImport() {
           method: "POST",
           body: JSON.stringify({ path: btn.dataset.path, merge: true }),
         });
-        toast(`Import OK: ${r.imported.join(", ") || "(không mới)"}`);
+        toast(`Import OK: ${r.imported.join(", ") || "(none new)"}`);
         await refreshAll();
       } catch (err) {
         toast(err.message, true);
@@ -307,7 +458,7 @@ async function loadActivity({ reset = false } = {}) {
     const feed = document.getElementById("activity-feed");
     feed.innerHTML = entries.length
       ? entries.map(renderActivityRow).join("")
-      : '<div class="empty">Không có log khớp bộ lọc.</div>';
+      : '<div class="empty">No activity matches the current filters.</div>';
     activitySeenIds = new Set(entries.map((e) => e.id));
     bindActivityRows(feed);
     return;
@@ -367,23 +518,45 @@ function onActivityTabActive() {
 }
 
 async function loadEnvForm() {
-  const data = await api("/api/config/env");
-  const form = document.getElementById("env-form");
-  form.innerHTML = "";
-  const values = data.values || {};
+  const [envData, projectConfig] = await Promise.all([
+    api("/api/config/env"),
+    api("/api/projects/config"),
+  ]);
+  const values = envData.values || {};
+  const targets = {
+    machine: document.getElementById("settings-machine-fields"),
+    global: document.getElementById("settings-global-fields"),
+    runtime: document.getElementById("settings-runtime-fields"),
+  };
+  Object.values(targets).forEach((target) => {
+    target.innerHTML = "";
+  });
   for (const key of ENV_KEYS) {
+    const meta = ENV_FIELDS[key];
+    if (!meta) continue;
     const label = document.createElement("label");
-    label.innerHTML = `<span>${key}</span>`;
+    label.className = "setting-field";
+    label.innerHTML = `<span class="setting-label">${esc(meta.label)}</span>`;
     const input = document.createElement("input");
     input.name = key;
     input.value = values[key] ?? "";
     label.appendChild(input);
-    form.appendChild(label);
+    const help = document.createElement("span");
+    help.className = "setting-help";
+    help.textContent = meta.help;
+    label.appendChild(help);
+    targets[meta.group].appendChild(label);
   }
+  document.getElementById("default-project-instruction").value =
+    projectConfig.config?.default_project_instruction ?? "";
 }
 
 const dialog = document.getElementById("server-dialog");
 const serverForm = document.getElementById("server-form");
+const projectAddDialog = document.getElementById("project-add-dialog");
+const projectAddForm = document.getElementById("project-add-form");
+const projectEditDialog = document.getElementById("project-edit-dialog");
+const projectEditForm = document.getElementById("project-edit-form");
 
 function transportFields(form) {
   const t = form.transport.value;
@@ -398,7 +571,7 @@ serverForm.expose.addEventListener("change", () => transportFields(serverForm));
 function openServerDialog(server) {
   editingServerId = server?.id ?? null;
   serverForm.reset();
-  document.getElementById("dialog-title").textContent = server ? "Sửa MCP Server" : "Thêm MCP Server";
+  document.getElementById("dialog-title").textContent = server ? "Edit MCP Server" : "Add MCP Server";
   document.getElementById("tool-chips").innerHTML = "";
   if (server) {
     serverForm.id.value = server.id;
@@ -423,10 +596,20 @@ function openServerDialog(server) {
 
 document.getElementById("close-dialog").addEventListener("click", () => dialog.close());
 document.getElementById("close-tools").addEventListener("click", () => document.getElementById("tools-dialog").close());
+document.getElementById("close-project-add").addEventListener("click", () => projectAddDialog.close());
+document.getElementById("cancel-project-add").addEventListener("click", () => projectAddDialog.close());
+document.getElementById("close-project-edit").addEventListener("click", () => projectEditDialog.close());
+document.getElementById("cancel-project-edit").addEventListener("click", () => projectEditDialog.close());
+document.getElementById("browse-project-skills").addEventListener("click", () => {
+  if (!editingProjectId) return;
+  loadProjectEditorSkills(editingProjectId)
+    .then(() => toast("Skills refreshed"))
+    .catch((err) => toast(err.message, true));
+});
 
 document.getElementById("fetch-tools").addEventListener("click", async () => {
   const id = serverForm.id.value.trim();
-  if (!id) return toast("Nhập ID trước", true);
+  if (!id) return toast("Enter an ID first", true);
   try {
     const r = await api(`/api/upstream/${id}/tools`);
     const selected = new Set(serverForm.tools.value.split(",").map((s) => s.trim()).filter(Boolean));
@@ -456,7 +639,7 @@ serverForm.addEventListener("submit", async (e) => {
   try {
     args = serverForm.args.value.trim() ? JSON.parse(serverForm.args.value) : [];
   } catch {
-    return toast("Args phải là JSON array hợp lệ", true);
+    return toast("Args must be a valid JSON array", true);
   }
   const server = {
     id: serverForm.id.value.trim(),
@@ -475,7 +658,7 @@ serverForm.addEventListener("submit", async (e) => {
   try {
     await api("/api/upstream", { method: "POST", body: JSON.stringify({ server }) });
     dialog.close();
-    toast("Đã lưu");
+    toast("Saved");
     await loadServers();
   } catch (err) {
     toast(err.message, true);
@@ -510,16 +693,62 @@ document.getElementById("activity-live").addEventListener("change", () => {
 document.getElementById("activity-clear").addEventListener("click", () => {
   activitySeenIds.clear();
   document.getElementById("activity-feed").innerHTML =
-    '<div class="empty">Đã xóa hiển thị. Log mới vẫn sẽ xuất hiện khi Live bật.</div>';
+    '<div class="empty">Display cleared. New activity will still appear while Live is enabled.</div>';
 });
 
 document.getElementById("add-server").addEventListener("click", () => openServerDialog(null));
+document.getElementById("add-project").addEventListener("click", () => {
+  projectAddForm.reset();
+  projectAddDialog.showModal();
+});
+projectAddForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const project = {
+    path: projectAddForm.elements.namedItem("path").value.trim(),
+    name: projectAddForm.elements.namedItem("name").value.trim(),
+  };
+  try {
+    await api("/api/projects", { method: "POST", body: JSON.stringify(project) });
+    projectAddDialog.close();
+    toast("Project added");
+    await loadProject();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
+projectEditForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!editingProjectId) return;
+  const pinnedSkills = [...document.querySelectorAll("#global-skills-list [data-pinned-skill]:checked")]
+    .map((input) => input.dataset.pinnedSkill);
+  const project = {
+    name: projectEditForm.elements.namedItem("name").value.trim(),
+    use_default_instruction:
+      projectEditForm.elements.namedItem("use_default_instruction").checked,
+    instruction: projectEditForm.elements.namedItem("instruction").value,
+    pinned_skills: pinnedSkills,
+  };
+  try {
+    await api(`/api/projects/${editingProjectId}`, {
+      method: "PUT",
+      body: JSON.stringify(project),
+    });
+    projectEditDialog.close();
+    toast("Project settings saved");
+    await loadProject();
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
 document.getElementById("save-env").addEventListener("click", async () => {
   const values = {};
   document.querySelectorAll("#env-form input").forEach((el) => (values[el.name] = el.value));
   try {
     await api("/api/config/env", { method: "PUT", body: JSON.stringify({ values }) });
-    toast("Đã lưu .env");
+    await api("/api/projects/config", { method: "PUT", body: JSON.stringify({
+      default_project_instruction: document.getElementById("default-project-instruction").value,
+    }) });
+    toast("Settings saved");
   } catch (err) {
     toast(err.message, true);
   }
@@ -528,13 +757,13 @@ document.getElementById("save-env").addEventListener("click", async () => {
 document.getElementById("import-file-btn").addEventListener("click", async () => {
   const filePath = document.getElementById("import-file-path").value.trim();
   const source = document.getElementById("import-file-source").value;
-  if (!filePath) return toast("Nhập đường dẫn file", true);
+  if (!filePath) return toast("Enter a file path", true);
   try {
     const r = await api("/api/import/file", {
       method: "POST",
       body: JSON.stringify({ path: filePath, detect_as: source, merge: true }),
     });
-    toast(`Import OK: ${r.imported.join(", ") || "(không mới)"}`);
+    toast(`Import OK: ${r.imported.join(", ") || "(none new)"}`);
     await refreshAll();
   } catch (err) {
     toast(err.message, true);

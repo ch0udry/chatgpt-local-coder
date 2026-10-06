@@ -86,6 +86,61 @@ body {
   border-bottom: 1px solid var(--border);
 }
 .panel-head h2 { margin: 0; font-size: 0.9rem; font-weight: 600; color: var(--text); }
+.panel-sub { color: var(--muted); font-size: 0.76rem; margin-top: 0.2rem; }
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  gap: 0.75rem;
+  padding: 1rem 1.25rem 1.25rem;
+}
+.project-card {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface-2);
+  padding: 0.9rem;
+  min-width: 0;
+}
+.project-card-head { margin-bottom: 0.7rem; }
+.project-title-wrap { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.project-title-wrap strong { font-size: 0.9rem; }
+.project-path {
+  margin-top: 0.3rem;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-context { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+.context-indicator {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--faint);
+  font-size: 0.64rem;
+  padding: 0.18rem 0.38rem;
+}
+.context-indicator.on { color: var(--text); border-color: #4a4a4a; }
+.project-actions { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.project-editor-modal { max-width: 760px; }
+.project-editor-body { max-height: 70vh; overflow-y: auto; }
+.project-editor-body textarea { resize: vertical; min-height: 110px; }
+.editor-section { border-top: 1px solid var(--border); padding: 1rem 1.25rem; }
+.editor-section-head { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; margin-bottom: 0.65rem; font-size: 0.82rem; }
+.editor-note { padding: 0 !important; margin: 0 0 0.75rem !important; font-size: 0.75rem; }
+.skill-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
+.skill-column-title { color: var(--muted); font-size: 0.72rem; margin-bottom: 0.4rem; }
+.skill-list { display: flex; flex-direction: column; gap: 0.4rem; }
+.skill-row { border: 1px solid var(--border); border-radius: 7px; padding: 0.55rem 0.6rem; background: var(--bg); font-size: 0.76rem; }
+.skill-row > div:first-child { display: flex; align-items: center; gap: 0.4rem; }
+.skill-pinnable { cursor: pointer; }
+.skill-pinnable input { width: auto; margin: 0; }
+.skill-source { display: inline-block; border-radius: 4px; padding: 0.12rem 0.35rem; font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.skill-source.project { border: 1px solid #555; color: var(--text); }
+.skill-source.global { border: 1px solid var(--border); color: var(--muted); }
+.skill-description { color: var(--faint); margin-top: 0.25rem; line-height: 1.35; }
+.restart-note { margin-right: auto; max-width: 390px; font-size: 0.7rem; }
 
 .stat-grid {
   display: grid;
@@ -191,6 +246,25 @@ input:focus, select:focus { border-color: #555; }
 .env-grid label { display: contents; }
 .env-grid label > span:first-child { color: var(--muted); font-size: 0.8rem; font-family: var(--mono); }
 .form-actions { display: flex; align-items: center; gap: 1rem; padding: 0 1.25rem 1.25rem; }
+
+.settings-stack { display: flex; flex-direction: column; gap: 0.9rem; }
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.8rem;
+  padding: 1rem 1.25rem 1.25rem;
+}
+.settings-project-config { padding-top: 0; grid-template-columns: 1fr; }
+.setting-field { display: flex; flex-direction: column; gap: 0.35rem; min-width: 0; }
+.setting-label { color: var(--muted); font-size: 0.76rem; font-weight: 500; }
+.setting-help { color: var(--faint); font-size: 0.68rem; line-height: 1.35; }
+.setting-field textarea { resize: vertical; min-height: 120px; }
+.settings-savebar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.1rem 0 0.4rem;
+}
 
 .code-block {
   margin: 0;
@@ -353,4 +427,5 @@ input:focus, select:focus { border-color: #555; }
   .form-grid { grid-template-columns: 1fr; }
   .field.span-2 { grid-column: span 1; }
   .env-grid { grid-template-columns: 1fr; }
+  .skill-columns { grid-template-columns: 1fr; }
 }

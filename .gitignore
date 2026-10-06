@@ -10,11 +10,15 @@ bin/
 .mcp-checkpoints/
 .mcp-state/
 .tool-test-tmp/
+graphify-out/
 terminals/
 agent-tools/
 mcps/
 log_console.txt
 *.log
+
+# Local planning / implementation notes
+/docs/project-workspace-system/
 
 # Configuration & Environment
 .env

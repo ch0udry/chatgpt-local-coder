@@ -35,8 +35,8 @@ async function gitOrThrow(args: string[], cwd: string): Promise<GitRunResult> {
   return result;
 }
 
-export function registerGitTools(server: McpServer, defaultCwd: string): void {
-  const repo = async (p?: string) => (p ? validatePath(p) : defaultCwd);
+export function registerGitTools(server: McpServer, getProjectRoot: () => string): void {
+  const repo = async (p?: string) => (p ? validatePath(p, getProjectRoot()) : getProjectRoot());
 
   server.registerTool("git_status", {
     title: "Git Status", description: "Show git working tree status.",

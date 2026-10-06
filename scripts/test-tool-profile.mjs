@@ -5,7 +5,7 @@ import { SLIM_CHATGPT_TOOLS, shouldExposeTool } from "../dist/lib/tool-profile.j
 import { createMcpServer } from "../dist/server-factory.js";
 
 const EXPECTED_LOCAL_SLIM = [
-  "agent_status", "project_context",
+  "agent_status", "project_context", "list_projects", "use_project", "list_skills", "load_skill",
   "glob", "grep",
   "read_text_file", "load_path_rules", "apply_patch", "write_file", "rewind",
   "create_directory", "delete_file", "copy_file", "move_file",
@@ -58,6 +58,7 @@ try {
     registerMcpServer: () => {},
     callTool: async () => ({}),
   };
+  process.env.CHATGPT_TOOL_PROFILE = "slim";
   const server = await createMcpServer(process.cwd(), 1, [process.cwd()], true, manager);
   const registered = Object.keys(server._registeredTools).sort();
   const expected = [

@@ -28,7 +28,7 @@ export function getFullDiskAccess(): boolean {
   return true;
 }
 
-export async function validatePath(inputPath: string): Promise<string> {
+export async function validatePath(inputPath: string, relativeTo = defaultCwd): Promise<string> {
   const trimmed = inputPath.trim();
   if (!trimmed) throw new Error("Path is empty");
 
@@ -36,8 +36,7 @@ export async function validatePath(inputPath: string): Promise<string> {
     return path.resolve(trimmed);
   }
 
-  // Relative paths resolve from default cwd (WORKSPACE_PATH), not a sandbox boundary.
-  return path.resolve(defaultCwd, trimmed);
+  return path.resolve(relativeTo, trimmed);
 }
 
 export function getMachineRoots(): string[] {

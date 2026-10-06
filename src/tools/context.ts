@@ -65,7 +65,7 @@ async function findContextFiles(root: string, maxDepth: number): Promise<string[
   return [...new Set(found)];
 }
 
-export function registerContextTools(server: McpServer, workspaceRoot: string): void {
+export function registerContextTools(server: McpServer, getProjectRoot: () => string): void {
   server.registerTool(
     "project_context",
     {
@@ -81,7 +81,7 @@ export function registerContextTools(server: McpServer, workspaceRoot: string): 
       annotations: toolAnnotations("read"),
     },
     async ({ path: projectPath, max_depth, max_bytes_per_file }) => {
-      const root = projectPath ? await validatePath(projectPath) : workspaceRoot;
+      const root = projectPath ? await validatePath(projectPath, getProjectRoot()) : getProjectRoot();
       const files = await findContextFiles(root, max_depth);
       const fileContents: Array<{ path: string; content: string; truncated: boolean }> = [];
 
@@ -147,7 +147,7 @@ export function registerContextTools(server: McpServer, workspaceRoot: string): 
       annotations: toolAnnotations("edit"),
     },
     async ({ note }) => {
-      const file = await appendAutoMemory(workspaceRoot, note);
+      const file = await appendAutoMemory(getProjectRoot(), note);
       await audit({ tool: "remember", action: "append", target: file, status: "ok" });
       return toolResult("remember", { saved_to: file, note }, { summary: "saved to auto memory" });
     }
@@ -165,8 +165,8 @@ export function registerContextTools(server: McpServer, workspaceRoot: string): 
       annotations: toolAnnotations("read"),
     },
     async ({ path: filePath }) => {
-      const validPath = await validatePath(filePath);
-      const rules = await loadPathRulesForFile(workspaceRoot, validPath);
+      const validPath = await validatePath(filePath, getProjectRoot());
+      const rules = await loadPathRulesForFile(getProjectRoot(), validPath);
       await audit({ tool: "load_path_rules", action: "read", target: validPath, status: "ok", details: { rules: rules.length } });
       return toolResult("load_path_rules", { path: validPath, rules, count: rules.length });
     }

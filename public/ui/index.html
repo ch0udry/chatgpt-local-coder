@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -17,31 +17,31 @@
         </div>
       </div>
       <nav class="nav">
-        <button class="nav-item active" data-tab="dashboard">Tổng quan</button>
+        <button class="nav-item active" data-tab="dashboard">Overview</button>
         <button class="nav-item" data-tab="servers">MCP Servers</button>
         <button class="nav-item" data-tab="import">Import</button>
-        <button class="nav-item" data-tab="activity">Nhật ký</button>
-        <button class="nav-item" data-tab="project">Project</button>
-        <button class="nav-item" data-tab="settings">Cài đặt</button>
+        <button class="nav-item" data-tab="activity">Activity</button>
+        <button class="nav-item" data-tab="project">Projects</button>
+        <button class="nav-item" data-tab="settings">Settings</button>
         <button class="nav-item" data-tab="logs">Raw status</button>
       </nav>
       <div class="sidebar-foot">
-        <div id="conn-status" class="conn-dot">Đang kết nối…</div>
+        <div id="conn-status" class="conn-dot">Connecting…</div>
       </div>
     </aside>
 
     <main class="content">
       <header class="topbar">
-        <h1 id="page-title">Tổng quan</h1>
+        <h1 id="page-title">Overview</h1>
         <div class="topbar-actions">
-          <button type="button" class="btn ghost" id="refresh-all">Làm mới</button>
+          <button type="button" class="btn ghost" id="refresh-all">Refresh</button>
         </div>
       </header>
 
       <section id="dashboard" class="view active">
         <div class="stat-grid" id="stat-grid"></div>
         <div class="panel">
-          <div class="panel-head"><h2>Upstream nhanh</h2></div>
+          <div class="panel-head"><h2>Upstream Overview</h2></div>
           <div id="dash-servers" class="table-wrap"></div>
         </div>
       </section>
@@ -50,7 +50,7 @@
         <div class="panel">
           <div class="panel-head">
             <h2>MCP Servers</h2>
-            <button type="button" class="btn primary" id="add-server">+ Thêm server</button>
+            <button type="button" class="btn primary" id="add-server">+ Add Server</button>
           </div>
           <div id="servers-table" class="table-wrap"></div>
         </div>
@@ -58,12 +58,12 @@
 
       <section id="import" class="view">
         <div class="panel">
-          <div class="panel-head"><h2>Import từ IDE / CLI</h2></div>
-          <p class="muted">Tự động quét config MCP trên máy. Import merge — không ghi đè server đã có.</p>
+          <div class="panel-head"><h2>Import from IDE / CLI</h2></div>
+          <p class="muted">Automatically scan MCP configs on this machine. Imports are merged without overwriting existing servers.</p>
           <div id="import-grid" class="import-grid"></div>
         </div>
         <div class="panel">
-          <div class="panel-head"><h2>Import file tùy chọn</h2></div>
+          <div class="panel-head"><h2>Import Custom File</h2></div>
           <div class="inline-form">
             <input type="text" id="import-file-path" placeholder="C:\path\to\mcp.json" />
             <select id="import-file-source">
@@ -81,48 +81,87 @@
           <div class="panel-head">
             <h2>Tool calls · ChatGPT</h2>
             <div class="activity-toolbar">
-              <select id="activity-kind" aria-label="Lọc loại">
-                <option value="all">Tất cả</option>
+              <select id="activity-kind" aria-label="Filter by type">
+                <option value="all">All</option>
                 <option value="mcp">ChatGPT MCP</option>
-                <option value="tool">Thực thi tool</option>
+                <option value="tool">Tool calls</option>
                 <option value="session">Session</option>
               </select>
-              <select id="activity-status" aria-label="Lọc trạng thái">
-                <option value="all">Mọi trạng thái</option>
-                <option value="error">Chỉ lỗi</option>
+              <select id="activity-status" aria-label="Filter by status">
+                <option value="all">All statuses</option>
+                <option value="error">Errors only</option>
               </select>
-              <input type="search" id="activity-search" placeholder="Tìm tool, path…" />
+              <input type="search" id="activity-search" placeholder="Search tool, path…" />
               <label class="activity-live">
                 <input type="checkbox" id="activity-live" checked />
                 <span>Live</span>
               </label>
-              <button type="button" class="btn ghost sm" id="activity-clear">Xóa hiển thị</button>
+              <button type="button" class="btn ghost sm" id="activity-clear">Clear View</button>
             </div>
           </div>
           <div id="activity-feed" class="activity-feed">
-            <div class="empty">Chưa có log. Gọi tool từ ChatGPT để thấy ở đây.</div>
+            <div class="empty">No activity yet. Call a tool from ChatGPT to see it here.</div>
           </div>
         </div>
       </section>
 
       <section id="project" class="view">
         <div class="panel">
-          <div class="panel-head"><h2>MCP instructions (ChatGPT context)</h2></div>
-          <p class="muted">Nội dung inject vào mỗi MCP session — CLAUDE.md, git, agent prompt.</p>
-          <div id="project-meta" class="stat-grid"></div>
-          <pre id="project-preview" class="code-block" style="max-height:420px;overflow:auto"></pre>
+          <div class="panel-head">
+            <div>
+              <h2>Projects</h2>
+              <div class="panel-sub">Registered project contexts for ChatGPT Coder.</div>
+            </div>
+            <button type="button" class="btn primary" id="add-project">+ Add Project</button>
+          </div>
+          <div id="projects-grid" class="project-grid"></div>
         </div>
       </section>
 
       <section id="settings" class="view">
-        <div class="panel">
-          <div class="panel-head"><h2>Environment (.env)</h2></div>
-          <form id="env-form" class="env-grid"></form>
-          <div class="form-actions">
-            <button type="button" class="btn primary" id="save-env">Lưu .env</button>
-            <span class="muted">Một số giá trị cần restart server.</span>
+        <form id="env-form" class="settings-stack">
+          <div class="panel" id="settings-machine">
+            <div class="panel-head">
+              <div>
+                <h2>Machine / Shell</h2>
+                <div class="panel-sub">Machine-level defaults. These do not define project access boundaries.</div>
+              </div>
+            </div>
+            <div id="settings-machine-fields" class="settings-grid"></div>
           </div>
-        </div>
+
+          <div class="panel" id="settings-global-context">
+            <div class="panel-head">
+              <div>
+                <h2>Global Context</h2>
+                <div class="panel-sub">Shared skills and default project instruction.</div>
+              </div>
+            </div>
+            <div id="settings-global-fields" class="settings-grid"></div>
+            <div class="settings-grid settings-project-config">
+              <label class="setting-field">
+                <span class="setting-label">Default Project Instruction</span>
+                <textarea id="default-project-instruction" rows="7"></textarea>
+                <span class="setting-help">Restart required before MCP sessions use an updated default project instruction.</span>
+              </label>
+            </div>
+          </div>
+
+          <div class="panel" id="settings-runtime">
+            <div class="panel-head">
+              <div>
+                <h2>Runtime</h2>
+                <div class="panel-sub">Ports, tool profile, checkpoints and runtime config paths.</div>
+              </div>
+            </div>
+            <div id="settings-runtime-fields" class="settings-grid"></div>
+          </div>
+
+          <div class="settings-savebar">
+            <button type="button" class="btn primary" id="save-env">Save Settings</button>
+            <span class="muted">Fields marked “Restart required” need a server restart. Other values apply to subsequent tool calls or new MCP sessions.</span>
+          </div>
+        </form>
       </section>
 
       <section id="logs" class="view">
@@ -135,6 +174,71 @@
 
   <div id="toast" class="toast" hidden></div>
 
+  <dialog id="project-add-dialog" class="modal">
+    <form method="dialog" id="project-add-form" class="modal-body">
+      <div class="modal-head">
+        <h3>Add Project</h3>
+        <button type="button" class="btn icon" id="close-project-add" aria-label="Close">×</button>
+      </div>
+      <div class="form-grid">
+        <label class="field span-2"><span>Project path</span><input name="path" required /></label>
+        <label class="field span-2"><span>Name</span><input name="name" required /></label>
+      </div>
+      <menu class="modal-foot">
+        <button type="button" class="btn ghost" id="cancel-project-add">Cancel</button>
+        <button type="submit" class="btn primary">Add</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <dialog id="project-edit-dialog" class="modal project-editor-modal">
+    <form method="dialog" id="project-edit-form" class="modal-body">
+      <div class="modal-head">
+        <h3 id="project-edit-title">Edit Project</h3>
+        <button type="button" class="btn icon" id="close-project-edit" aria-label="Close">×</button>
+      </div>
+      <div class="project-editor-body">
+        <div class="form-grid">
+          <label class="field span-2"><span>Name</span><input name="name" required /></label>
+          <label class="field span-2"><span>Path</span><input name="path" readonly /></label>
+          <label class="field checkbox span-2">
+            <input name="use_default_instruction" type="checkbox" />
+            <span>Use Default Project Instruction</span>
+          </label>
+          <label class="field span-2"><span>Project Instruction</span><textarea name="instruction" rows="6"></textarea></label>
+        </div>
+
+        <div class="editor-section">
+          <div class="editor-section-head"><strong>Detected Context</strong></div>
+          <div id="project-context-summary" class="project-context"></div>
+        </div>
+
+        <div class="editor-section">
+          <div class="editor-section-head">
+            <strong>Skills</strong>
+            <button type="button" class="btn sm ghost" id="browse-project-skills">Browse Skills</button>
+          </div>
+          <p class="muted editor-note">Pinned skills are preferences only. Unpinned available skills can still be loaded by prompt.</p>
+          <div class="skill-columns">
+            <div>
+              <div class="skill-column-title">Project Skills</div>
+              <div id="project-skills-list" class="skill-list"></div>
+            </div>
+            <div>
+              <div class="skill-column-title">Global Skills</div>
+              <div id="global-skills-list" class="skill-list"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <menu class="modal-foot">
+        <span class="muted restart-note">Saved registry changes require a server restart before new MCP sessions use the updated project context.</span>
+        <button type="button" class="btn ghost" id="cancel-project-edit">Cancel</button>
+        <button type="submit" class="btn primary">Save Project</button>
+      </menu>
+    </form>
+  </dialog>
+
   <dialog id="server-dialog" class="modal">
     <form method="dialog" id="server-form" class="modal-body">
       <div class="modal-head">
@@ -143,8 +247,8 @@
       </div>
       <div class="form-grid">
         <label class="field"><span>ID</span><input name="id" required /></label>
-        <label class="field"><span>Tên hiển thị</span><input name="name" /></label>
-        <label class="field checkbox"><input name="enabled" type="checkbox" checked /><span>Bật server</span></label>
+        <label class="field"><span>Display Name</span><input name="name" /></label>
+        <label class="field checkbox"><input name="enabled" type="checkbox" checked /><span>Enable Server</span></label>
         <label class="field"><span>Transport</span>
           <select name="transport"><option value="stdio">stdio</option><option value="http">http</option></select>
         </label>
@@ -161,16 +265,16 @@
             <option value="none">none</option>
           </select>
         </label>
-        <label class="field span-2"><span>Allowlist (phẩy)</span><input name="tools" placeholder="tool_a, tool_b" /></label>
+        <label class="field span-2"><span>Allowlist (comma-separated)</span><input name="tools" placeholder="tool_a, tool_b" /></label>
         <label class="field"><span>Idle timeout (s)</span><input name="idle_timeout_sec" type="number" value="600" /></label>
       </div>
       <div id="tool-picker" class="tool-picker hidden">
-        <div class="tool-picker-head"><span>Tools từ upstream</span><button type="button" class="btn ghost sm" id="fetch-tools">Tải tools</button></div>
+        <div class="tool-picker-head"><span>Upstream Tools</span><button type="button" class="btn ghost sm" id="fetch-tools">Load Tools</button></div>
         <div id="tool-chips" class="tool-chips"></div>
       </div>
       <menu class="modal-foot">
-        <button type="button" class="btn ghost" value="cancel">Hủy</button>
-        <button type="submit" class="btn primary" id="save-server">Lưu</button>
+        <button type="button" class="btn ghost" value="cancel">Cancel</button>
+        <button type="submit" class="btn primary" id="save-server">Save</button>
       </menu>
     </form>
   </dialog>
