@@ -35,52 +35,44 @@ async function contextSummary(projectPath: string) {
   };
 }
 
-function resolveProject(
-  projects: ProjectToolEntry[],
-  requested: string
-): { project?: ProjectToolEntry; candidates?: ProjectToolEntry[] } {
-  const query = requested.trim();
-  const byId = projects.find((project) => project.id === query);
-  if (byId) return { project: byId };
-
-  if (path.isAbsolute(query)) {
-    const resolved = path.resolve(query);
-    const byPath = projects.find((project) => path.resolve(project.path) === resolved);
-    if (byPath) return { project: byPath };
-  }
-
-  const sameName = projects.filter((project) => project.name === query);
-  if (sameName.length) return { candidates: sameName };
-  return {};
-}
-
 export function registerProjectTools(
   server: McpServer,
-  projects: ProjectToolEntry[],
-  primaryProjectId: string | null,
+  getProjects: () => ProjectToolEntry[],
+  getMode: () => "project" | "shell",
   getActiveProject: () => { id: string; root: string } | null,
-  setActiveProject: (projectId: string) => void,
-  getProjectInstructions: (projectId: string, projectRoot: string) => Promise<string | undefined>
+  getRuntimeContext: () => Promise<Record<string, unknown>>
 ): void {
+  server.registerTool(
+    "runtime_context",
+    {
+      title: "Runtime Context",
+      description:
+        "Load the current global Project Mode or Shell Mode, effective root, and current project context. Call this before connector task work.",
+      inputSchema: {},
+      annotations: toolAnnotations("read"),
+    },
+    async () => toolResult("runtime_context", await getRuntimeContext())
+  );
+
   server.registerTool(
     "list_projects",
     {
       title: "List Projects",
       description:
-        "List registered projects, including the global primary project and this MCP session's active project.",
+        "List registered projects and the one global active project, or Shell Mode when none is active.",
       inputSchema: {},
       annotations: toolAnnotations("read"),
     },
     async () => {
+      const projects = getProjects();
       const activeId = getActiveProject()?.id ?? null;
       const rows = await Promise.all(projects.map(async (project) => ({
         ...project,
-        primary: project.id === primaryProjectId,
         active: project.id === activeId,
         context: await contextSummary(project.path),
       })));
       return toolResult("list_projects", {
-        primary_project_id: primaryProjectId,
+        mode: getMode(),
         active_project_id: activeId,
         projects: rows,
         count: rows.length,
@@ -93,41 +85,17 @@ export function registerProjectTools(
     {
       title: "Use Project",
       description:
-        "Select a registered project for this MCP session only. Resolve by exact project id or exact registered absolute path; project names are never guessed.",
+        "Project activation is global and controlled by the Admin UI. This compatibility tool does not change project state.",
       inputSchema: {
         project: z.string().min(1).describe("Exact registered project id or exact absolute path"),
       },
       annotations: toolAnnotations("read"),
     },
     async ({ project: requested }) => {
-      const resolved = resolveProject(projects, requested);
-      if (!resolved.project) {
-        const candidates = resolved.candidates ?? [];
-        return toolError(
-          "use_project",
-          candidates.length
-            ? `Project name is ambiguous or not selectable by name: ${requested}`
-            : `Project not found: ${requested}`,
-          {
-            requested,
-            candidates,
-          }
-        );
-      }
-
-      setActiveProject(resolved.project.id);
-      const instructions = await getProjectInstructions(
-        resolved.project.id,
-        resolved.project.path
-      );
-      return toolResult("use_project", {
-        project: {
-          ...resolved.project,
-          primary: resolved.project.id === primaryProjectId,
-          active: true,
-          context: await contextSummary(resolved.project.path),
-        },
-        instructions: instructions ?? "",
+      return toolError("use_project", "Project activation is global and controlled by the Admin UI.", {
+        requested,
+        mode: getMode(),
+        active_project_id: getActiveProject()?.id ?? null,
       });
     }
   );

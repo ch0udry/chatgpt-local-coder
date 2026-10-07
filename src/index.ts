@@ -18,15 +18,13 @@ import { startContextEngineDiscovery } from "./lib/context-engine-discovery.js";
 import { startAdminServer } from "./admin/server.js";
 import { logMcpHttpEvent, logMcpRequest } from "./lib/activity-log.js";
 import {
-  buildInstructionContext,
-  summarizeInstructionContext,
-  type InstructionContext,
+  buildStaticMcpInstructions,
 } from "./lib/instruction-context.js";
 import { getChatGptToolProfile } from "./lib/tool-profile.js";
 import { createOAuthShimRouter } from "./lib/oauth-shim.js";
 import {
   loadOrBootstrapProjectRegistry,
-  resolvePrimaryProject,
+  ProjectRuntimeState,
 } from "./lib/project-registry.js";
 
 const PORT = parseInt(process.env.PORT || "3000", 10);
@@ -39,37 +37,18 @@ const SESSION_RECOVERY =
   (process.env.MCP_SESSION_RECOVERY || "true").toLowerCase() !== "false";
 
 const projectRegistry = await loadOrBootstrapProjectRegistry(process.env);
-const primaryProject = resolvePrimaryProject(projectRegistry);
-const workspaceRoots = projectRegistry.projects.map((project) => project.path);
-const workspaceRoot =
-  primaryProject?.path ?? path.resolve(process.env.WORKSPACE_PATH || process.cwd());
-const defaultShellCwd = path.resolve(process.env.DEFAULT_SHELL_CWD || workspaceRoot);
+const defaultShellCwd = path.resolve(process.env.DEFAULT_SHELL_CWD || process.cwd());
+const projectRuntime = new ProjectRuntimeState(projectRegistry, defaultShellCwd);
+const workspaceRoots = projectRuntime.getProjects().map((project) => project.path);
+const workspaceRoot = projectRuntime.getEffectiveRoot();
 setDefaultCwd(defaultShellCwd);
 
 const upstreamManager = await initUpstreamManager();
 const stopContextEngineDiscovery = await startContextEngineDiscovery(upstreamManager);
 
-const instructionContext: InstructionContext = await buildInstructionContext({
-  workspaceRoot,
-  workspaceRoots,
-  pid: process.pid,
-  adminPort: ADMIN_PORT,
-});
-
-if (instructionContext.projectMemory.sections.length > 0) {
-  console.log(
-    `[MCP] Project memory: ${instructionContext.projectMemory.sections.length} file(s) from ${workspaceRoot} (${instructionContext.projectMemory.total_bytes} bytes)`
-  );
-} else {
-  console.log(
-    `[MCP] Project memory: no CLAUDE.md/AGENTS.md at ${workspaceRoot} — set WORKSPACE_PATH to your project root`
-  );
-}
-if (instructionContext.git.is_repo) {
-  console.log(`[MCP] Git: branch ${instructionContext.git.branch}`);
-}
+const staticInstructions = buildStaticMcpInstructions(defaultShellCwd);
 console.log(
-  `[MCP] MCP instructions: ${Math.round(instructionContext.instructionBytes / 1024)}KB (agent prompt + env + git + memory)`
+  `[MCP] MCP instructions: ${Math.round(Buffer.byteLength(staticInstructions, "utf-8") / 1024)}KB (static core + runtime_context handshake)`
 );
 console.log(`[MCP] Tool profile: ${getChatGptToolProfile()} (CHATGPT_TOOL_PROFILE)`);
 
@@ -78,13 +57,11 @@ const sessionManager = createSessionManager({
   defaultShellCwd,
   shellTimeout: SHELL_TIMEOUT,
   workspaceRoots,
-  projects: projectRegistry.projects,
+  projectRuntime,
   port: PORT,
-  primaryProjectId: primaryProject?.id ?? null,
-  defaultProjectInstruction: projectRegistry.default_project_instruction,
   pid: process.pid,
   adminPort: ADMIN_PORT,
-  projectMemoryInstructions: instructionContext.instructionsText,
+  staticInstructions,
 });
 
 const MCP_TOKENS = [...new Set([MCP_TOKEN, MCP_TOKEN_NEXT].filter(Boolean))];
@@ -362,8 +339,15 @@ const adminServer = startAdminServer({
   pid: process.pid,
   manager: upstreamManager,
   sessionCount: () => sessionManager.count(),
-  instructionSummary: () => summarizeInstructionContext(instructionContext),
-  instructionsPreview: () => instructionContext.instructionsText,
+  instructionSummary: () => ({
+    mode: projectRuntime.getMode(),
+    active_project_id: projectRuntime.getActiveProject()?.id ?? null,
+    effective_root: projectRuntime.getEffectiveRoot(),
+    shell_root: projectRuntime.getShellRoot(),
+    runtime_revision: projectRuntime.getRuntimeRevision(),
+    instruction_bytes: Buffer.byteLength(staticInstructions, "utf-8"),
+  }),
+  instructionsPreview: () => staticInstructions,
 });
 
 const server = app.listen(PORT, HOST, () => {

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "child_process";
+import path from "path";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { validatePath } from "../lib/path-security.js";
@@ -6,12 +7,7 @@ import { requireCommandAllowed } from "../lib/permissions.js";
 import { audit } from "../lib/audit.js";
 import { toolAnnotations } from "../lib/tool-annotations.js";
 import { toolResult } from "../lib/tool-result.js";
-import {
-  bootstrapShellSession,
-  execInShellSession,
-  getShellStatus,
-  resetShellSession,
-} from "../lib/persistent-shell.js";
+import { createPersistentShellSession } from "../lib/persistent-shell.js";
 
 interface ManagedProcess {
   id: string;
@@ -37,8 +33,14 @@ function appendLog(lines: string[], data: Buffer): void {
   }
 }
 
-export function registerShellTools(server: McpServer, getDefaultCwd: () => string, timeoutSec: number): void {
-  void bootstrapShellSession(getDefaultCwd());
+export function registerShellTools(
+  server: McpServer,
+  getDefaultCwd: () => string,
+  timeoutSec: number,
+  sessionId = "standalone",
+  getContextKey: () => string = () => path.resolve(getDefaultCwd())
+): void {
+  const shellSession = createPersistentShellSession(sessionId, getDefaultCwd, getContextKey);
 
   server.registerTool(
     "run_command",
@@ -56,7 +58,7 @@ export function registerShellTools(server: McpServer, getDefaultCwd: () => strin
     async ({ command, working_directory }) => {
       requireCommandAllowed(command);
       const cwdOverride = working_directory ? await validatePath(working_directory) : undefined;
-      const result = await execInShellSession(command, getDefaultCwd(), timeoutSec * 1000, cwdOverride);
+      const result = await shellSession.exec(command, timeoutSec * 1000, cwdOverride);
       await audit({
         tool: "run_command",
         action: "command",
@@ -81,7 +83,7 @@ export function registerShellTools(server: McpServer, getDefaultCwd: () => strin
       annotations: toolAnnotations("read"),
     },
     async () => {
-      const status = getShellStatus();
+      const status = await shellSession.getStatus();
       return toolResult("shell_status", status, { summary: `cwd: ${status.cwd}` });
     }
   );
@@ -97,7 +99,7 @@ export function registerShellTools(server: McpServer, getDefaultCwd: () => strin
     },
     async ({ path: dirPath }) => {
       const cwd = dirPath ? await validatePath(dirPath) : getDefaultCwd();
-      resetShellSession(cwd);
+      await shellSession.reset(cwd);
       return toolResult("shell_reset", { cwd }, { summary: `shell cwd reset to ${cwd}` });
     }
   );
@@ -113,7 +115,9 @@ export function registerShellTools(server: McpServer, getDefaultCwd: () => strin
     },
     async ({ command, working_directory }) => {
       requireCommandAllowed(command);
-      const cwd = working_directory ? await validatePath(working_directory) : getShellStatus().cwd || getDefaultCwd();
+      const cwd = working_directory
+        ? await validatePath(working_directory)
+        : await shellSession.getCwd();
       const shell = process.platform === "win32" ? "powershell.exe" : "bash";
       const args = process.platform === "win32" ? ["-NoProfile", "-Command", command] : ["-lc", command];
       const child = spawn(shell, args, { cwd, windowsHide: true, env: process.env });
