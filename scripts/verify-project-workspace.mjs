@@ -36,6 +36,7 @@ const focused = [
   "scripts/test-admin-project-lifecycle.mjs",
   "scripts/test-active-project-ui.mjs",
   "scripts/test-project-runtime-e2e-v2.mjs",
+  "scripts/test-production-v2-migration.mjs",
   "scripts/test-project-editor-ui.mjs",
   "scripts/test-settings-ui.mjs",
   "scripts/test-admin-ui-language.mjs",
