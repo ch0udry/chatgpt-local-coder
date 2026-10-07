@@ -25,8 +25,7 @@ import {
 import { getChatGptToolProfile } from "./lib/tool-profile.js";
 import { createOAuthShimRouter } from "./lib/oauth-shim.js";
 import {
-  bootstrapLegacyProjects,
-  loadProjectRegistry,
+  loadOrBootstrapProjectRegistry,
   resolvePrimaryProject,
 } from "./lib/project-registry.js";
 
@@ -39,11 +38,7 @@ const SHELL_TIMEOUT = parseInt(process.env.SHELL_TIMEOUT || "120", 10);
 const SESSION_RECOVERY =
   (process.env.MCP_SESSION_RECOVERY || "true").toLowerCase() !== "false";
 
-const loadedProjectRegistry = await loadProjectRegistry();
-const projectRegistry =
-  loadedProjectRegistry.projects.length > 0
-    ? loadedProjectRegistry
-    : bootstrapLegacyProjects(process.env);
+const projectRegistry = await loadOrBootstrapProjectRegistry(process.env);
 const primaryProject = resolvePrimaryProject(projectRegistry);
 const workspaceRoots = projectRegistry.projects.map((project) => project.path);
 const workspaceRoot =

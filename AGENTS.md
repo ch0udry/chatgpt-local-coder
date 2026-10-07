@@ -13,7 +13,7 @@ MCP server local giống Codex: đọc/ghi file, chạy lệnh, git. Dùng với
 - Dùng absolute path bất kỳ: `C:\`, `D:\Projects\...` (Windows) · `/Users/you/projects/...` (macOS) · `/home/you/...` (Linux)
 - Project registry nằm ở `profiles/projects.toml`; project active là default/context cho project-aware tools
 - `DEFAULT_SHELL_CWD` là cwd mặc định cho shell/system work khi không có active project phù hợp; không phải security boundary
-- `WORKSPACE_PATH` / `EXTRA_WORKSPACE_PATHS` chỉ là legacy fallback/bootstrap khi registry chưa có project
+- `WORKSPACE_PATH` / `EXTRA_WORKSPACE_PATHS` chỉ bootstrap một lần khi `profiles/projects.toml` chưa tồn tại; bootstrap được persist vào TOML, và TOML đã tồn tại (kể cả empty) luôn là source of truth
 - `CHATGPT_AUTO_APPROVE=true` — giảm popup xác nhận trên ChatGPT
 
 ## Projects + skills

@@ -109,6 +109,16 @@ export async function saveProjectRegistry(
   await fs.writeFile(configPath, stringify(normalized), "utf-8");
 }
 
+async function projectRegistryFileExists(configPath: string): Promise<boolean> {
+  try {
+    await fs.access(configPath);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 export function resolvePrimaryProject(
   registry: ProjectRegistryFile
 ): ProjectConfig | null {
@@ -186,7 +196,25 @@ export function bootstrapLegacyProjects(env: NodeJS.ProcessEnv): ProjectRegistry
 
   return {
     version: CONFIG_VERSION,
+    ...(projects.length ? { primary_project: projects[0].id } : {}),
     default_project_instruction: "",
     projects,
   };
+}
+
+export async function loadOrBootstrapProjectRegistry(
+  env: NodeJS.ProcessEnv = process.env,
+  configPath = resolveProjectRegistryPath()
+): Promise<ProjectRegistryFile> {
+  if (await projectRegistryFileExists(configPath)) {
+    return loadProjectRegistry(configPath);
+  }
+
+  const bootstrapped = bootstrapLegacyProjects(env);
+  if (bootstrapped.projects.length === 0) {
+    return bootstrapped;
+  }
+
+  await saveProjectRegistry(bootstrapped, configPath);
+  return loadProjectRegistry(configPath);
 }

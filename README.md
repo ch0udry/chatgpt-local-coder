@@ -346,7 +346,7 @@ OPENAI_TUNNEL_API_KEY=
 
 Projects are persisted in `profiles/projects.toml`. The configured primary project becomes the default active project for a new MCP session, while `use_project` changes only the current session. Separate ChatGPT sessions can therefore work on different projects at the same time.
 
-Legacy `WORKSPACE_PATH` and `EXTRA_WORKSPACE_PATHS` remain supported as **legacy fallback/bootstrap inputs** when the registry has no projects. Once `profiles/projects.toml` contains registered projects, the registry is preferred. The server does not delete or rewrite those legacy values automatically. To persist a legacy project in the new model, add it through **Admin UI → Projects**.
+Legacy `WORKSPACE_PATH` and `EXTRA_WORKSPACE_PATHS` remain supported only as **one-time bootstrap inputs when `profiles/projects.toml` is missing**. A successful bootstrap is persisted to `profiles/projects.toml`; from then on TOML is authoritative, even when it intentionally contains zero projects. Later changes to the legacy env values do not silently change registered projects, and the server does not delete or rewrite those env values automatically.
 
 ## 🖥️ Admin UI
 

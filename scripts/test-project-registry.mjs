@@ -159,6 +159,7 @@ pinned_skills = []
     EXTRA_WORKSPACE_PATHS: `${f.b};${f.a}`,
   });
   assert.deepEqual(registry.projects.map((project) => project.path), [f.a, f.b]);
+  assert.equal(registry.primary_project, registry.projects[0].id);
   assert.ok(registry.projects.every((project) => project.use_default_instruction));
   ok("legacy workspace paths bootstrap uniquely");
 }

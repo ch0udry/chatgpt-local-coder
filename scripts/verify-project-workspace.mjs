@@ -24,6 +24,7 @@ await run("npm", ["test"]); // npm test
 
 const focused = [
   "scripts/test-project-registry.mjs",
+  "scripts/test-project-registry-bootstrap.mjs",
   "scripts/test-session-project-state.mjs",
   "scripts/test-active-project-defaults.mjs",
   "scripts/test-project-instructions.mjs",
