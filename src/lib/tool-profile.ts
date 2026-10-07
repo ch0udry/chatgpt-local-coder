@@ -6,7 +6,6 @@ export const SLIM_CHATGPT_TOOLS = new Set([
   "runtime_context",
   "project_context",
   "list_projects",
-  "use_project",
   "list_skills",
   "load_skill",
   "glob",

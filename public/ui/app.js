@@ -181,6 +181,7 @@ async function loadDashboard() {
 async function loadProject() {
   const data = await api("/api/projects");
   const grid = document.getElementById("projects-grid");
+  document.getElementById("use-shell-mode").disabled = data.mode === "shell";
   if (!data.projects.length) {
     grid.innerHTML = '<div class="empty">No projects registered. Add a project to begin.</div>';
     return;
@@ -198,14 +199,14 @@ async function loadProject() {
       <div class="project-card-head">
         <div class="project-title-wrap">
           <strong>${esc(project.name)}</strong>
-          ${project.primary ? '<span class="badge ok">Primary</span>' : ""}
+          ${project.active ? '<span class="badge ok">Active</span>' : ""}
         </div>
         <div class="project-path">${esc(project.path)}</div>
       </div>
       <div class="project-context">${indicators}</div>
       <div class="project-actions">
         <button class="btn sm ghost" data-project-action="edit" data-id="${esc(project.id)}">Edit</button>
-        ${project.primary ? "" : `<button class="btn sm ghost" data-project-action="primary" data-id="${esc(project.id)}">Set Primary</button>`}
+        ${project.active ? "" : `<button class="btn sm ghost" data-project-action="activate" data-id="${esc(project.id)}">Activate</button>`}
         <button class="btn sm ghost" data-project-action="remove" data-id="${esc(project.id)}">Remove from ChatGPT Coder</button>
       </div>
     </article>`;
@@ -220,10 +221,10 @@ function bindProjectActions(container) {
       try {
         if (btn.dataset.projectAction === "edit") {
           await openProjectEditor(id);
-        } else if (btn.dataset.projectAction === "primary") {
-          await api(`/api/projects/${id}/primary`, { method: "PUT" });
-          toast("Primary project updated");
-          await loadProject();
+        } else if (btn.dataset.projectAction === "activate") {
+          await api(`/api/projects/${id}/activate`, { method: "PUT" });
+          toast("Project activated");
+          await Promise.all([loadProject(), loadDashboard()]);
         } else if (btn.dataset.projectAction === "remove") {
           if (!confirm("Remove from ChatGPT Coder? Project files and folders on disk will not be deleted.")) return;
           await api(`/api/projects/${id}`, { method: "DELETE" });
@@ -600,6 +601,15 @@ document.getElementById("close-project-add").addEventListener("click", () => pro
 document.getElementById("cancel-project-add").addEventListener("click", () => projectAddDialog.close());
 document.getElementById("close-project-edit").addEventListener("click", () => projectEditDialog.close());
 document.getElementById("cancel-project-edit").addEventListener("click", () => projectEditDialog.close());
+document.getElementById("use-shell-mode").addEventListener("click", async () => {
+  try {
+    await api("/api/projects/shell", { method: "PUT" });
+    toast("Shell Mode active");
+    await Promise.all([loadProject(), loadDashboard()]);
+  } catch (err) {
+    toast(err.message, true);
+  }
+});
 document.getElementById("browse-project-skills").addEventListener("click", () => {
   if (!editingProjectId) return;
   loadProjectEditorSkills(editingProjectId)

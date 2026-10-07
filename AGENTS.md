@@ -13,13 +13,13 @@ MCP server local giống Codex: đọc/ghi file, chạy lệnh, git. Dùng với
 - Dùng absolute path bất kỳ: `C:\`, `D:\Projects\...` (Windows) · `/Users/you/projects/...` (macOS) · `/home/you/...` (Linux)
 - Project registry nằm ở `profiles/projects.toml`; project active là default/context cho project-aware tools
 - `DEFAULT_SHELL_CWD` là cwd mặc định cho shell/system work khi không có active project phù hợp; không phải security boundary
-- `WORKSPACE_PATH` / `EXTRA_WORKSPACE_PATHS` chỉ bootstrap một lần khi `profiles/projects.toml` chưa tồn tại; bootstrap được persist vào TOML, và TOML đã tồn tại (kể cả empty) luôn là source of truth
+- Registry v2 không bootstrap project từ `WORKSPACE_PATH` / `EXTRA_WORKSPACE_PATHS`; nếu chưa có TOML thì bắt đầu ở Shell Mode với registry rỗng
 - `CHATGPT_AUTO_APPROVE=true` — giảm popup xác nhận trên ChatGPT
 
 ## Projects + skills
 
-- `list_projects` — xem project đã đăng ký, primary và active project của session hiện tại
-- `use_project` — đổi active project **chỉ cho MCP session hiện tại**; không đổi primary global
+- `runtime_context` — lấy global Project Mode / Shell Mode hiện tại trước connector task work
+- `list_projects` — xem project đã đăng ký và một global active project, hoặc Shell Mode
 - `project_context` — inspect project context; không tự đổi active project
 - `list_skills` — list skill động từ active project + global directory
 - `load_skill` — load full `SKILL.md`

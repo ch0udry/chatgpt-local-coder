@@ -20,12 +20,9 @@ import {
 } from "../lib/activity-log.js";
 import {
   createProjectConfig,
-  loadProjectRegistry,
-  resolvePrimaryProject,
   resolveProjectRegistryPath,
-  saveProjectRegistry,
+  type ProjectRuntimeState,
   type ProjectConfig,
-  type ProjectRegistryFile,
 } from "../lib/project-registry.js";
 import { loadProjectMemory } from "../lib/project-memory.js";
 import { listAvailableSkills } from "../lib/skills-loader.js";
@@ -67,10 +64,10 @@ async function detectProjectContext(projectPath: string) {
   };
 }
 
-async function projectResponse(registry: ProjectRegistryFile, project: ProjectConfig) {
+async function projectResponse(activeProjectId: string | null, project: ProjectConfig) {
   return {
     ...project,
-    primary: resolvePrimaryProject(registry)?.id === project.id,
+    active: activeProjectId === project.id,
     context: await detectProjectContext(project.path),
   };
 }
@@ -121,13 +118,13 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
   mcpPort: number;
   pid: number;
   sessionCount: () => number;
+  projectRuntime: ProjectRuntimeState;
   instructionSummary?: () => Record<string, unknown>;
   instructionsPreview?: () => string;
-  projectRegistryPath?: string;
 }): Router {
   const router = Router();
   const envPath = path.resolve(process.cwd(), ".env");
-  const projectRegistryPath = options.projectRegistryPath ?? resolveProjectRegistryPath();
+  const projectRegistryPath = resolveProjectRegistryPath();
 
   const registryError = (res: Response, err: unknown) => {
     res.status(400).json({ ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -135,13 +132,18 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
 
   router.get("/api/projects", async (_req, res) => {
     try {
-      const registry = await loadProjectRegistry(projectRegistryPath);
+      const registry = options.projectRuntime.getRegistry();
+      const activeProjectId = options.projectRuntime.getActiveProject()?.id ?? null;
       const projects = await Promise.all(
-        registry.projects.map((project) => projectResponse(registry, project))
+        registry.projects.map((project) => projectResponse(activeProjectId, project))
       );
       res.json({
         ok: true,
-        primary_project: resolvePrimaryProject(registry)?.id ?? null,
+        mode: options.projectRuntime.getMode(),
+        active_project_id: activeProjectId,
+        effective_root: options.projectRuntime.getEffectiveRoot(),
+        shell_root: options.projectRuntime.getShellRoot(),
+        runtime_revision: options.projectRuntime.getRuntimeRevision(),
         projects,
       });
     } catch (err) {
@@ -151,7 +153,7 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
 
   router.post("/api/projects", async (req, res) => {
     try {
-      const registry = await loadProjectRegistry(projectRegistryPath);
+      const registry = options.projectRuntime.getRegistry();
       const projectPath = await requireProjectDirectory(String(req.body?.path ?? ""));
       const project = createProjectConfig(registry, {
         name: String(req.body?.name ?? ""),
@@ -161,8 +163,15 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
         pinned_skills: req.body?.pinned_skills,
       });
       const next = { ...registry, projects: [...registry.projects, project] };
-      await saveProjectRegistry(next, projectRegistryPath);
-      res.json({ ok: true, project: await projectResponse(next, project) });
+      const snapshot = await options.projectRuntime.replaceRegistry(next);
+      res.json({
+        ok: true,
+        project: await projectResponse(snapshot.activeProject?.id ?? null, project),
+        mode: snapshot.mode,
+        active_project_id: snapshot.activeProject?.id ?? null,
+        effective_root: snapshot.effectiveRoot,
+        runtime_revision: snapshot.runtimeRevision,
+      });
     } catch (err) {
       registryError(res, err);
     }
@@ -170,12 +179,11 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
 
   router.get("/api/projects/config", async (_req, res) => {
     try {
-      const registry = await loadProjectRegistry(projectRegistryPath);
+      const registry = options.projectRuntime.getRegistry();
       res.json({
         ok: true,
         path: projectRegistryPath,
         config: {
-          primary_project: registry.primary_project ?? null,
           default_project_instruction: registry.default_project_instruction,
         },
       });
@@ -186,33 +194,41 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
 
   router.put("/api/projects/config", async (req, res) => {
     try {
-      const registry = await loadProjectRegistry(projectRegistryPath);
+      const registry = options.projectRuntime.getRegistry();
       const body = req.body?.config ?? req.body ?? {};
-      const next: ProjectRegistryFile = {
+      const next = {
         ...registry,
         default_project_instruction:
           body.default_project_instruction === undefined
             ? registry.default_project_instruction
             : String(body.default_project_instruction),
       };
-
-      if (body.primary_project !== undefined) {
-        const requested =
-          body.primary_project === null ? "" : String(body.primary_project).trim();
-        if (requested && !registry.projects.some((project) => project.id === requested)) {
-          throw new Error(`Primary project not found: ${requested}`);
-        }
-        if (requested) next.primary_project = requested;
-        else delete next.primary_project;
-      }
-
-      await saveProjectRegistry(next, projectRegistryPath);
+      const snapshot = await options.projectRuntime.replaceRegistry(next);
       res.json({
         ok: true,
         config: {
-          primary_project: next.primary_project ?? null,
           default_project_instruction: next.default_project_instruction,
         },
+        mode: snapshot.mode,
+        active_project_id: snapshot.activeProject?.id ?? null,
+        effective_root: snapshot.effectiveRoot,
+        runtime_revision: snapshot.runtimeRevision,
+      });
+    } catch (err) {
+      registryError(res, err);
+    }
+  });
+
+  router.put("/api/projects/shell", async (_req, res) => {
+    try {
+      const snapshot = await options.projectRuntime.useShellMode();
+      res.json({
+        ok: true,
+        mode: snapshot.mode,
+        active_project_id: null,
+        effective_root: snapshot.effectiveRoot,
+        shell_root: snapshot.shellRoot,
+        runtime_revision: snapshot.runtimeRevision,
       });
     } catch (err) {
       registryError(res, err);
@@ -221,13 +237,16 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
 
   router.get("/api/projects/:id", async (req, res) => {
     try {
-      const registry = await loadProjectRegistry(projectRegistryPath);
+      const registry = options.projectRuntime.getRegistry();
       const project = registry.projects.find((entry) => entry.id === req.params.id);
       if (!project) {
         res.status(404).json({ ok: false, error: "Project not found" });
         return;
       }
-      res.json({ ok: true, project: await projectResponse(registry, project) });
+      res.json({
+        ok: true,
+        project: await projectResponse(options.projectRuntime.getActiveProject()?.id ?? null, project),
+      });
     } catch (err) {
       registryError(res, err);
     }
@@ -235,7 +254,7 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
 
   router.put("/api/projects/:id", async (req, res) => {
     try {
-      const registry = await loadProjectRegistry(projectRegistryPath);
+      const registry = options.projectRuntime.getRegistry();
       const index = registry.projects.findIndex((entry) => entry.id === req.params.id);
       if (index < 0) {
         res.status(404).json({ ok: false, error: "Project not found" });
@@ -264,11 +283,12 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
       const projects = [...registry.projects];
       projects[index] = updated;
       const next = { ...registry, projects };
-      await saveProjectRegistry(next, projectRegistryPath);
-      const saved = (await loadProjectRegistry(projectRegistryPath)).projects.find(
-        (entry) => entry.id === req.params.id
-      )!;
-      res.json({ ok: true, project: await projectResponse(next, saved) });
+      const snapshot = await options.projectRuntime.replaceRegistry(next);
+      const saved = snapshot.registry.projects.find((entry) => entry.id === req.params.id)!;
+      res.json({
+        ok: true,
+        project: await projectResponse(snapshot.activeProject?.id ?? null, saved),
+      });
     } catch (err) {
       registryError(res, err);
     }
@@ -276,48 +296,46 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
 
   router.delete("/api/projects/:id", async (req, res) => {
     try {
-      const registry = await loadProjectRegistry(projectRegistryPath);
+      const registry = options.projectRuntime.getRegistry();
       const removed = registry.projects.find((entry) => entry.id === req.params.id);
       if (!removed) {
         res.status(404).json({ ok: false, error: "Project not found" });
         return;
       }
       const projects = registry.projects.filter((entry) => entry.id !== req.params.id);
-      const next: ProjectRegistryFile = { ...registry, projects };
-      if (next.primary_project === removed.id) {
-        if (projects.length) next.primary_project = projects[0].id;
-        else delete next.primary_project;
+      const next = { ...registry, projects };
+      if (next.active_project === removed.id) {
+        delete next.active_project;
       }
-      await saveProjectRegistry(next, projectRegistryPath);
+      const snapshot = await options.projectRuntime.replaceRegistry(next);
       res.json({
         ok: true,
         removed_project_id: removed.id,
         files_deleted: false,
-        config: {
-          primary_project: next.primary_project ?? null,
-          default_project_instruction: next.default_project_instruction,
-        },
+        mode: snapshot.mode,
+        active_project_id: snapshot.activeProject?.id ?? null,
+        effective_root: snapshot.effectiveRoot,
+        runtime_revision: snapshot.runtimeRevision,
       });
     } catch (err) {
       registryError(res, err);
     }
   });
 
-  router.put("/api/projects/:id/primary", async (req, res) => {
+  router.put("/api/projects/:id/activate", async (req, res) => {
     try {
-      const registry = await loadProjectRegistry(projectRegistryPath);
-      if (!registry.projects.some((entry) => entry.id === req.params.id)) {
+      if (!options.projectRuntime.getProjects().some((entry) => entry.id === req.params.id)) {
         res.status(404).json({ ok: false, error: "Project not found" });
         return;
       }
-      const next = { ...registry, primary_project: req.params.id };
-      await saveProjectRegistry(next, projectRegistryPath);
+      const snapshot = await options.projectRuntime.activateProject(req.params.id);
       res.json({
         ok: true,
-        config: {
-          primary_project: next.primary_project,
-          default_project_instruction: next.default_project_instruction,
-        },
+        mode: snapshot.mode,
+        active_project_id: snapshot.activeProject?.id ?? null,
+        effective_root: snapshot.effectiveRoot,
+        shell_root: snapshot.shellRoot,
+        runtime_revision: snapshot.runtimeRevision,
       });
     } catch (err) {
       registryError(res, err);
@@ -326,7 +344,7 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
 
   router.get("/api/projects/:id/inspect", async (req, res) => {
     try {
-      const registry = await loadProjectRegistry(projectRegistryPath);
+      const registry = options.projectRuntime.getRegistry();
       const project = registry.projects.find((entry) => entry.id === req.params.id);
       if (!project) {
         res.status(404).json({ ok: false, error: "Project not found" });
@@ -337,7 +355,7 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
       });
       res.json({
         ok: true,
-        project: await projectResponse(registry, project),
+        project: await projectResponse(options.projectRuntime.getActiveProject()?.id ?? null, project),
         memory,
       });
     } catch (err) {
@@ -347,7 +365,7 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
 
   router.get("/api/projects/:id/skills", async (req, res) => {
     try {
-      const registry = await loadProjectRegistry(projectRegistryPath);
+      const registry = options.projectRuntime.getRegistry();
       const project = registry.projects.find((entry) => entry.id === req.params.id);
       if (!project) {
         res.status(404).json({ ok: false, error: "Project not found" });
@@ -372,13 +390,19 @@ export function createAdminRouter(manager: McpUpstreamManager, options: {
 
   router.get("/health", async (_req: Request, res: Response) => {
     const upstream = await manager.listStatuses();
+    const snapshot = options.projectRuntime.snapshot();
     res.json({
       status: "ok",
       name: "codex-mcp-admin",
       pid: options.pid,
       mcp_port: options.mcpPort,
       active_sessions: options.sessionCount(),
-      default_cwd: getDefaultCwd(),
+      mode: snapshot.mode,
+      active_project_id: snapshot.activeProject?.id ?? null,
+      effective_root: snapshot.effectiveRoot,
+      shell_root: snapshot.shellRoot,
+      runtime_revision: snapshot.runtimeRevision,
+      default_cwd: snapshot.effectiveRoot,
       full_disk_access: getFullDiskAccess(),
       upstream,
       checkpoint: getCheckpointConfig(),

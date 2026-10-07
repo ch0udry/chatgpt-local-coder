@@ -11,11 +11,25 @@ const {
   createSessionManager,
   isInitializeRequest,
 } = await import("../dist/lib/mcp-session-manager.js");
+const { ProjectRuntimeState } = await import("../dist/lib/project-registry.js");
 
 const root = await mkdtemp(path.join(tmpdir(), "pws005-"));
 const project = path.join(root, "project");
 await mkdir(project);
 await writeFile(path.join(project, "AGENTS.md"), "# Test\nPWS005-AGENT-MARKER\n", "utf8");
+const projectRuntime = new ProjectRuntimeState({
+  version: 2,
+  active_project: "project",
+  default_project_instruction: "PWS005-DEFAULT-MARKER",
+  projects: [{
+    id: "project",
+    name: "Project",
+    path: project,
+    use_default_instruction: true,
+    instruction: "PWS005-CUSTOM-MARKER",
+    pinned_skills: [],
+  }],
+}, project, path.join(root, "projects.toml"));
 
 const app = express();
 app.use(express.json());
@@ -25,14 +39,7 @@ const config = {
   defaultShellCwd: project,
   shellTimeout: 5,
   workspaceRoots: [project],
-  projects: [{
-    id: "project",
-    path: project,
-    use_default_instruction: true,
-    instruction: "PWS005-CUSTOM-MARKER",
-  }],
-  primaryProjectId: "project",
-  defaultProjectInstruction: "PWS005-DEFAULT-MARKER",
+  projectRuntime,
   pid: process.pid,
   adminPort: 3331,
   port: 0,
@@ -78,14 +85,13 @@ try {
   const instructions = json?.result?.instructions;
   assert.equal(typeof instructions, "string");
   assert.match(instructions, /Agent workflow/);
-  assert.match(instructions, /PWS005-DEFAULT-MARKER/);
-  assert.match(instructions, /PWS005-CUSTOM-MARKER/);
-  assert.match(instructions, /PWS005-AGENT-MARKER/);
-  assert.equal(instructions.split("PWS005-CUSTOM-MARKER").length - 1, 1);
+  assert.match(instructions, /runtime_context/);
+  assert.doesNotMatch(instructions, /PWS005-DEFAULT-MARKER/);
+  assert.doesNotMatch(instructions, /PWS005-CUSTOM-MARKER|PWS005-AGENT-MARKER/);
 
-  console.log("OK  initialize response contains generated instructions");
-  console.log("OK  initialize instructions contain global/default/custom/repo context");
-  console.log("OK  project custom instruction is not duplicated");
+  console.log("OK  initialize response contains static core instructions");
+  console.log("OK  initialize instructions require runtime_context");
+  console.log("OK  mutable project/default/repo context is not embedded at initialize");
   console.log("\n3 passed, 0 failed");
 } finally {
   await new Promise((resolve) => server.close(resolve));

@@ -338,6 +338,7 @@ const adminServer = startAdminServer({
   mcpPort: PORT,
   pid: process.pid,
   manager: upstreamManager,
+  projectRuntime,
   sessionCount: () => sessionManager.count(),
   instructionSummary: () => ({
     mode: projectRuntime.getMode(),

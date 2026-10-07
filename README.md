@@ -243,8 +243,8 @@ Free sessions expire after **60 minutes** and the URL changes each time, so you 
 |------|-------------|
 | `agent_status` | Permissions, workspace roots, audit log |
 | `project_context` | Reads AGENTS.md, README, CLAUDE.md, configs |
-| `list_projects` | Lists registered projects and the current session's active project |
-| `use_project` | Changes the active project for the current MCP session only |
+| `runtime_context` | Loads the current global Project Mode or Shell Mode and effective context |
+| `list_projects` | Lists registered projects and the one global active project, or Shell Mode |
 
 ### Skills
 
@@ -327,7 +327,7 @@ OPENAI_TUNNEL_API_KEY=
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DEFAULT_SHELL_CWD` | primary project / process cwd | Starting cwd for shell-only work when no active project applies. It is **not** a filesystem allowlist |
+| `DEFAULT_SHELL_CWD` | process cwd | Starting cwd for Shell Mode when no project is active. It is **not** a filesystem allowlist |
 | `CHATGPT_GLOBAL_SKILLS_DIR` | *(empty)* | Global skill folders. Each skill is `<name>/SKILL.md`; available to all projects and shell/system work |
 | `HOST` | `127.0.0.1` | Bind address. Keep as-is — `0.0.0.0` exposes the shell to your whole LAN |
 | `MCP_TOKEN` | *(empty)* | Secret in the endpoint path: `/mcp/<token>`. Empty = **no auth**. Generate: `node -e "console.log(require('crypto').randomBytes(24).toString('base64url'))"` |
@@ -344,9 +344,9 @@ OPENAI_TUNNEL_API_KEY=
 
 ### Projects and compatibility
 
-Projects are persisted in `profiles/projects.toml`. The configured primary project becomes the default active project for a new MCP session, while `use_project` changes only the current session. Separate ChatGPT sessions can therefore work on different projects at the same time.
+Projects are persisted in `profiles/projects.toml`. There is one process-global `active_project` shared by every ChatGPT session. If `active_project` is absent, ChatGPT Coder is in **Shell Mode** and relative/default work starts from `DEFAULT_SHELL_CWD`. Project activation is controlled from **Admin UI → Projects**.
 
-Legacy `WORKSPACE_PATH` and `EXTRA_WORKSPACE_PATHS` remain supported only as **one-time bootstrap inputs when `profiles/projects.toml` is missing**. A successful bootstrap is persisted to `profiles/projects.toml`; from then on TOML is authoritative, even when it intentionally contains zero projects. Later changes to the legacy env values do not silently change registered projects, and the server does not delete or rewrite those env values automatically.
+In registry version 2, legacy `WORKSPACE_PATH` and `EXTRA_WORKSPACE_PATHS` are ignored for project registration. If `profiles/projects.toml` is missing, the server starts with an empty registry in Shell Mode; projects are added explicitly from the Admin UI.
 
 ## 🖥️ Admin UI
 
@@ -364,7 +364,7 @@ The exact URL is printed in the startup banner. Stopping the server stops the ad
 | **MCP Servers** | Enable/disable upstream MCP servers, test connections, inspect their tools |
 | **Import** | Pull existing MCP config from Cursor / Claude Code / OpenCode |
 | **Nhật ký** | Live tool-call log from ChatGPT (SSE stream) |
-| **Projects** | Project cards, Add/Edit, primary selection, custom instruction, detected context and skill preferences |
+| **Projects** | Project cards, Add/Edit, global activation / Shell Mode, custom instruction, detected context and skill preferences |
 | **Cài đặt** | Machine/Shell, Global Context and Runtime settings |
 | **Raw status** | Raw JSON status dump |
 
@@ -496,7 +496,7 @@ Dùng Pinggy nếu mạng chặn cloudflared (cổng 7844). Nếu cloudflared ch
 3. Client ID & Secret để trống. Server đã tích hợp sẵn OAuth 2.1 shim tự động xử lý xác thực.
 
 
-**Projects:** thêm project trong Admin UI → Projects. Registry nằm ở `profiles/projects.toml`; project active quyết định context/default cho session. `WORKSPACE_PATH` chỉ còn là legacy fallback khi registry chưa có project.
+**Projects:** thêm project trong Admin UI → Projects. Registry nằm ở `profiles/projects.toml`; một active project dùng chung cho mọi session, hoặc Shell Mode khi không có project active. `WORKSPACE_PATH` không còn tự đăng ký project trong registry v2.
 
 **Admin UI:** tự bật cùng `npm start` tại `http://127.0.0.1:<ADMIN_PORT>/ui` (mặc định 3001), không tắt riêng được. Dùng để quản lý Projects, global/runtime settings, MCP server khác và log tool call. **Đừng tunnel cổng này ra ngoài** — chỉ tunnel :3000.
 

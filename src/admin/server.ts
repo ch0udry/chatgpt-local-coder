@@ -3,6 +3,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import type { Server } from "http";
 import type { McpUpstreamManager } from "../lib/mcp-upstream-manager.js";
+import type { ProjectRuntimeState } from "../lib/project-registry.js";
 import { createAdminRouter } from "./routes.js";
 import { adminAuth, localhostOnly } from "./localhost-guard.js";
 
@@ -14,6 +15,7 @@ export interface AdminServerOptions {
   mcpPort: number;
   pid: number;
   manager: McpUpstreamManager;
+  projectRuntime: ProjectRuntimeState;
   sessionCount: () => number;
   instructionSummary?: () => Record<string, unknown>;
   instructionsPreview?: () => string;
@@ -35,6 +37,7 @@ export function startAdminServer(options: AdminServerOptions): Server {
     mcpPort: options.mcpPort,
     pid: options.pid,
     sessionCount: options.sessionCount,
+    projectRuntime: options.projectRuntime,
     instructionSummary: options.instructionSummary,
     instructionsPreview: options.instructionsPreview,
   }));

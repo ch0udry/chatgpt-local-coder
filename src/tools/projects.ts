@@ -1,9 +1,8 @@
 import fs from "fs/promises";
 import path from "path";
-import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { toolAnnotations } from "../lib/tool-annotations.js";
-import { toolError, toolResult } from "../lib/tool-result.js";
+import { toolResult } from "../lib/tool-result.js";
 
 export interface ProjectToolEntry {
   id: string;
@@ -80,23 +79,4 @@ export function registerProjectTools(
     }
   );
 
-  server.registerTool(
-    "use_project",
-    {
-      title: "Use Project",
-      description:
-        "Project activation is global and controlled by the Admin UI. This compatibility tool does not change project state.",
-      inputSchema: {
-        project: z.string().min(1).describe("Exact registered project id or exact absolute path"),
-      },
-      annotations: toolAnnotations("read"),
-    },
-    async ({ project: requested }) => {
-      return toolError("use_project", "Project activation is global and controlled by the Admin UI.", {
-        requested,
-        mode: getMode(),
-        active_project_id: getActiveProject()?.id ?? null,
-      });
-    }
-  );
 }
