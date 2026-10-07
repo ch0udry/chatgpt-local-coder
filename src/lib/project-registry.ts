@@ -12,13 +12,34 @@ export interface ProjectConfig {
 }
 
 export interface ProjectRegistryFile {
+  version: 2;
+  active_project?: string;
+  default_project_instruction: string;
+  projects: ProjectConfig[];
+  /**
+   * Transitional compile compatibility for PWS-020 Admin cleanup.
+   * Never persisted or used by v2 runtime semantics.
+   */
+  primary_project?: string;
+}
+
+interface LegacyProjectRegistryFile {
   version: 1;
   primary_project?: string;
-  default_project_instruction: string;
+  default_project_instruction?: string;
   projects: ProjectConfig[];
 }
 
-const CONFIG_VERSION = 1 as const;
+export interface ProjectRuntimeSnapshot {
+  registry: ProjectRegistryFile;
+  mode: "project" | "shell";
+  activeProject: ProjectConfig | null;
+  effectiveRoot: string;
+  shellRoot: string;
+  runtimeRevision: number;
+}
+
+const CONFIG_VERSION = 2 as const;
 
 export function defaultProjectRegistry(): ProjectRegistryFile {
   return {
@@ -53,30 +74,39 @@ function normalizeProject(project: ProjectConfig): ProjectConfig {
   };
 }
 
-export function validateProjectRegistry(registry: ProjectRegistryFile): ProjectRegistryFile {
-  if (registry?.version !== CONFIG_VERSION || !Array.isArray(registry.projects)) {
-    throw new Error("Project registry must be version 1 with a projects array");
-  }
-
-  const projects = registry.projects.map(normalizeProject);
+function normalizedProjects(projects: ProjectConfig[]): ProjectConfig[] {
+  const normalized = projects.map(normalizeProject);
   const ids = new Set<string>();
   const paths = new Set<string>();
 
-  for (const project of projects) {
+  for (const project of normalized) {
     if (ids.has(project.id)) throw new Error(`Duplicate project id: ${project.id}`);
     if (paths.has(project.path)) throw new Error(`Duplicate project path: ${project.path}`);
     ids.add(project.id);
     paths.add(project.path);
   }
 
-  const primaryProject =
-    typeof registry.primary_project === "string" && registry.primary_project.trim()
-      ? registry.primary_project.trim()
+  return normalized;
+}
+
+export function validateProjectRegistry(registry: ProjectRegistryFile): ProjectRegistryFile {
+  if (registry?.version !== CONFIG_VERSION || !Array.isArray(registry.projects)) {
+    throw new Error("Project registry must be version 2 with a projects array");
+  }
+
+  const projects = normalizedProjects(registry.projects);
+  const activeProject =
+    typeof registry.active_project === "string" && registry.active_project.trim()
+      ? registry.active_project.trim()
       : undefined;
+
+  if (activeProject && !projects.some((project) => project.id === activeProject)) {
+    throw new Error(`Active project is not registered: ${activeProject}`);
+  }
 
   return {
     version: CONFIG_VERSION,
-    ...(primaryProject ? { primary_project: primaryProject } : {}),
+    ...(activeProject ? { active_project: activeProject } : {}),
     default_project_instruction:
       typeof registry.default_project_instruction === "string"
         ? registry.default_project_instruction
@@ -85,13 +115,62 @@ export function validateProjectRegistry(registry: ProjectRegistryFile): ProjectR
   };
 }
 
+function migrateLegacyRegistry(registry: LegacyProjectRegistryFile): ProjectRegistryFile {
+  if (!Array.isArray(registry.projects)) {
+    throw new Error("Legacy project registry must contain a projects array");
+  }
+
+  const projects = normalizedProjects(registry.projects);
+  const requested =
+    typeof registry.primary_project === "string" && registry.primary_project.trim()
+      ? registry.primary_project.trim()
+      : undefined;
+  const activeProject = requested && projects.some((project) => project.id === requested)
+    ? requested
+    : undefined;
+
+  if (requested && !activeProject) {
+    console.warn(
+      `[projects] Legacy primary_project "${requested}" is not registered; migrating to Shell Mode.`
+    );
+  }
+
+  return {
+    version: CONFIG_VERSION,
+    ...(activeProject ? { active_project: activeProject } : {}),
+    default_project_instruction:
+      typeof registry.default_project_instruction === "string"
+        ? registry.default_project_instruction
+        : "",
+    projects,
+  };
+}
+
+async function writeV1BackupOnce(configPath: string, raw: string): Promise<void> {
+  try {
+    await fs.writeFile(`${configPath}.v1.bak`, raw, { encoding: "utf-8", flag: "wx" });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+}
+
 export async function loadProjectRegistry(
   configPath = resolveProjectRegistryPath()
 ): Promise<ProjectRegistryFile> {
   try {
     const raw = await fs.readFile(configPath, "utf-8");
-    const parsed = parse(raw, { unsafeKeyBehaviour: "throw" }) as unknown as ProjectRegistryFile;
-    return validateProjectRegistry(parsed);
+    const parsed = parse(raw, { unsafeKeyBehaviour: "throw" }) as unknown as
+      | ProjectRegistryFile
+      | LegacyProjectRegistryFile;
+
+    if (parsed?.version === 1) {
+      const migrated = migrateLegacyRegistry(parsed as LegacyProjectRegistryFile);
+      await writeV1BackupOnce(configPath, raw);
+      await saveProjectRegistry(migrated, configPath);
+      return migrated;
+    }
+
+    return validateProjectRegistry(parsed as ProjectRegistryFile);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return defaultProjectRegistry();
@@ -106,38 +185,29 @@ export async function saveProjectRegistry(
 ): Promise<void> {
   const normalized = validateProjectRegistry(registry);
   await fs.mkdir(path.dirname(configPath), { recursive: true });
-  await fs.writeFile(configPath, stringify(normalized), "utf-8");
-}
-
-async function projectRegistryFileExists(configPath: string): Promise<boolean> {
+  const tempPath = `${configPath}.tmp-${process.pid}`;
   try {
-    await fs.access(configPath);
-    return true;
+    await fs.writeFile(tempPath, stringify(normalized), "utf-8");
+    await fs.rename(tempPath, configPath);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    await fs.rm(tempPath, { force: true }).catch(() => undefined);
     throw error;
   }
 }
 
-export function resolvePrimaryProject(
+export function resolveActiveProject(
   registry: ProjectRegistryFile
 ): ProjectConfig | null {
   const normalized = validateProjectRegistry(registry);
-  if (normalized.projects.length === 0) return null;
-
-  return (
-    normalized.projects.find((project) => project.id === normalized.primary_project) ??
-    normalized.projects[0]
-  );
+  if (!normalized.active_project) return null;
+  return normalized.projects.find((project) => project.id === normalized.active_project) ?? null;
 }
 
-function splitWorkspacePaths(value: string | undefined): string[] {
-  if (!value) return [];
-  return value
-    .split(";")
-    .map((entry) => entry.trim().replace(/^['"]|['"]$/g, ""))
-    .filter(Boolean)
-    .map((entry) => path.resolve(entry));
+/** @deprecated PWS-020 removes primary terminology from Admin/API. */
+export function resolvePrimaryProject(
+  registry: ProjectRegistryFile
+): ProjectConfig | null {
+  return resolveActiveProject(registry);
 }
 
 function projectId(projectPath: string, usedIds: Set<string>): string {
@@ -176,45 +246,116 @@ export function createProjectConfig(
   });
 }
 
-export function bootstrapLegacyProjects(env: NodeJS.ProcessEnv): ProjectRegistryFile {
-  const paths = [
-    ...splitWorkspacePaths(env.WORKSPACE_PATH),
-    ...splitWorkspacePaths(env.EXTRA_WORKSPACE_PATHS),
-    ...splitWorkspacePaths(env.WORKSPACE_PATHS),
-    ...splitWorkspacePaths(env.ALLOWED_WORKSPACE_PATHS),
-  ];
+/**
+ * Transitional name retained until PWS-020/PWS-021 cleanup.
+ * v2 intentionally ignores legacy workspace env values.
+ */
+export async function loadOrBootstrapProjectRegistry(
+  _env: NodeJS.ProcessEnv = process.env,
+  configPath = resolveProjectRegistryPath()
+): Promise<ProjectRegistryFile> {
+  return loadProjectRegistry(configPath);
+}
 
-  const usedIds = new Set<string>();
-  const projects = [...new Set(paths)].map((projectPath) => ({
-    id: projectId(projectPath, usedIds),
-    name: path.basename(projectPath) || projectPath,
-    path: projectPath,
-    use_default_instruction: true,
-    instruction: "",
-    pinned_skills: [],
-  }));
-
+function cloneRegistry(registry: ProjectRegistryFile): ProjectRegistryFile {
   return {
     version: CONFIG_VERSION,
-    ...(projects.length ? { primary_project: projects[0].id } : {}),
-    default_project_instruction: "",
-    projects,
+    ...(registry.active_project ? { active_project: registry.active_project } : {}),
+    default_project_instruction: registry.default_project_instruction,
+    projects: registry.projects.map((project) => ({
+      ...project,
+      pinned_skills: [...project.pinned_skills],
+    })),
   };
 }
 
-export async function loadOrBootstrapProjectRegistry(
-  env: NodeJS.ProcessEnv = process.env,
-  configPath = resolveProjectRegistryPath()
-): Promise<ProjectRegistryFile> {
-  if (await projectRegistryFileExists(configPath)) {
-    return loadProjectRegistry(configPath);
+export class ProjectRuntimeState {
+  private registry: ProjectRegistryFile;
+  private readonly shellRoot: string;
+  private readonly configPath: string;
+  private runtimeRevision = 1;
+  private mutationChain: Promise<void> = Promise.resolve();
+
+  constructor(
+    registry: ProjectRegistryFile,
+    shellRoot: string,
+    configPath = resolveProjectRegistryPath()
+  ) {
+    this.registry = validateProjectRegistry(registry);
+    this.shellRoot = path.resolve(shellRoot);
+    this.configPath = configPath;
   }
 
-  const bootstrapped = bootstrapLegacyProjects(env);
-  if (bootstrapped.projects.length === 0) {
-    return bootstrapped;
+  snapshot(): ProjectRuntimeSnapshot {
+    const registry = cloneRegistry(this.registry);
+    const activeProject = resolveActiveProject(registry);
+    return {
+      registry,
+      mode: activeProject ? "project" : "shell",
+      activeProject,
+      effectiveRoot: activeProject?.path ?? this.shellRoot,
+      shellRoot: this.shellRoot,
+      runtimeRevision: this.runtimeRevision,
+    };
   }
 
-  await saveProjectRegistry(bootstrapped, configPath);
-  return loadProjectRegistry(configPath);
+  getRegistry(): ProjectRegistryFile {
+    return this.snapshot().registry;
+  }
+
+  getProjects(): ProjectConfig[] {
+    return this.getRegistry().projects;
+  }
+
+  getActiveProject(): ProjectConfig | null {
+    return this.snapshot().activeProject;
+  }
+
+  getMode(): "project" | "shell" {
+    return this.getActiveProject() ? "project" : "shell";
+  }
+
+  getEffectiveRoot(): string {
+    return this.getActiveProject()?.path ?? this.shellRoot;
+  }
+
+  getShellRoot(): string {
+    return this.shellRoot;
+  }
+
+  getRuntimeRevision(): number {
+    return this.runtimeRevision;
+  }
+
+  async replaceRegistry(next: ProjectRegistryFile): Promise<ProjectRuntimeSnapshot> {
+    let result!: ProjectRuntimeSnapshot;
+    const operation = this.mutationChain.then(async () => {
+      const normalized = validateProjectRegistry(next);
+      await saveProjectRegistry(normalized, this.configPath);
+      const changed = JSON.stringify(normalized) !== JSON.stringify(this.registry);
+      this.registry = normalized;
+      if (changed) this.runtimeRevision++;
+      result = this.snapshot();
+    });
+    this.mutationChain = operation.then(() => undefined, () => undefined);
+    await operation;
+    return result;
+  }
+
+  async activateProject(projectId: string): Promise<ProjectRuntimeSnapshot> {
+    const requested = requiredText(projectId, "Project id");
+    if (!this.registry.projects.some((project) => project.id === requested)) {
+      throw new Error(`Active project is not registered: ${requested}`);
+    }
+    return this.replaceRegistry({
+      ...this.getRegistry(),
+      active_project: requested,
+    });
+  }
+
+  async useShellMode(): Promise<ProjectRuntimeSnapshot> {
+    const next = this.getRegistry();
+    delete next.active_project;
+    return this.replaceRegistry(next);
+  }
 }

@@ -14,6 +14,7 @@ import { appendAutoMemory, formatAutoMemoryForInstructions, loadAutoMemory } fro
 import { formatSkillsForInstructions, loadProjectSkills } from "./skills-loader.js";
 import { getChatGptToolProfile } from "./tool-profile.js";
 import { buildServerInstructions } from "./quickstart.js";
+import type { ProjectRuntimeState } from "./project-registry.js";
 
 export interface InstructionContextOptions {
   workspaceRoot: string;
@@ -30,6 +31,66 @@ export interface InstructionContext {
   git: GitSnapshot;
   instructionsText: string;
   instructionBytes: number;
+}
+
+export function buildStaticMcpInstructions(shellRoot: string): string {
+  return [
+    "# Codex Local Coder MCP",
+    "Project selection is process-global and dynamic.",
+    "Call runtime_context before connector task work; do not use list_projects merely to discover the default project.",
+    `Shell root: ${shellRoot}`,
+    "Full machine access: ON. Explicit absolute paths may target anywhere allowed by the OS/user account.",
+    CODEX_AGENT_PROMPT,
+  ].join("\n\n");
+}
+
+export async function buildRuntimeContext(
+  runtime: ProjectRuntimeState,
+  opts: {
+    workspaceRoots: string[];
+    pid: number;
+    adminPort: number;
+  }
+): Promise<Record<string, unknown>> {
+  const snapshot = runtime.snapshot();
+  const base = {
+    runtime_revision: snapshot.runtimeRevision,
+    mode: snapshot.mode,
+    active_project_id: snapshot.activeProject?.id ?? null,
+    active_project_path: snapshot.activeProject?.path ?? null,
+    effective_root: snapshot.effectiveRoot,
+    shell_root: snapshot.shellRoot,
+  };
+
+  if (!snapshot.activeProject) {
+    return {
+      ...base,
+      directive:
+        "No project is active. Use the shell root for relative/default work. Do not infer or register the shell root as a project. This current global state supersedes any earlier connector project selection in the chat.",
+      project_context: null,
+    };
+  }
+
+  const project = snapshot.activeProject;
+  const context = await buildInstructionContext({
+    workspaceRoot: project.path,
+    workspaceRoots: opts.workspaceRoots,
+    pid: opts.pid,
+    adminPort: opts.adminPort,
+    defaultProjectInstruction: snapshot.registry.default_project_instruction,
+    useDefaultProjectInstruction: project.use_default_instruction !== false,
+    projectInstruction: project.instruction,
+  });
+
+  return {
+    ...base,
+    directive:
+      "The active project below is the current global default for connector operations. Use it for relative project work unless the user explicitly supplies another absolute path. This current global state supersedes any earlier connector project selection in the chat.",
+    project_context: {
+      instructions: context.instructionsText,
+      summary: summarizeInstructionContext(context),
+    },
+  };
 }
 
 export async function buildInstructionContext(

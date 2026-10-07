@@ -34,16 +34,29 @@ const {
   extractRequestId,
   isInitializeRequest,
 } = await import("../dist/lib/mcp-session-manager.js");
+const { ProjectRuntimeState } = await import("../dist/lib/project-registry.js");
 
 const app = express();
 app.use(express.json());
+const projectRuntime = new ProjectRuntimeState({
+  version: 2,
+  active_project: "project",
+  default_project_instruction: "",
+  projects: [{
+    id: "project",
+    name: "Project",
+    path: project,
+    use_default_instruction: true,
+    instruction: "",
+    pinned_skills: [],
+  }],
+}, root, path.join(root, "projects.toml"));
 const config = {
   workspaceRoot: project,
   defaultShellCwd: root,
   shellTimeout: 5,
   workspaceRoots: [project],
-  projects: [{ id: "project", path: project }],
-  primaryProjectId: "project",
+  projectRuntime,
   port: 0,
 };
 const manager = createSessionManager(config);
@@ -152,7 +165,7 @@ try {
   assert.match(fresh.data.content, /FRESH_WITHOUT_RESTART/);
   console.log("OK  newly added skill is visible without restart");
 
-  manager.setActiveProject(sid, null);
+  await projectRuntime.useShellMode();
   const shellGlobal = await callTool(sid, "load_skill", { name: "graphify-query" });
   assert.equal(shellGlobal.ok, true);
   assert.equal(shellGlobal.data.source, "global");

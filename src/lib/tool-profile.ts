@@ -3,9 +3,9 @@ export type ToolProfileName = "full" | "slim";
 /** Core tools for ChatGPT web — smaller tools/list payload, fewer discovery errors. */
 export const SLIM_CHATGPT_TOOLS = new Set([
   "agent_status",
+  "runtime_context",
   "project_context",
   "list_projects",
-  "use_project",
   "list_skills",
   "load_skill",
   "glob",

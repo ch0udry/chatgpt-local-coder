@@ -1,6 +1,6 @@
 export const MCP_QUICKSTART = `
 ## Tool workflow (when agent_status is called)
-1. Project memory + git state are already in MCP instructions for the active project.
+1. Call runtime_context to load the current global Project/Shell Mode and project context.
 2. Call project_context(path) when you need another repo's instruction/context without changing the active project.
 3. Explore with glob (file names) and grep (content), then read_text_file.
 4. Edit with apply_patch (preferred), multi_edit, or write_file for new files.

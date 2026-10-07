@@ -47,14 +47,12 @@ export async function createMcpServer(
     root: getProjectRoot(),
   }),
   projectRuntime?: {
-    projects: ProjectToolEntry[];
-    primaryProjectId: string | null;
-    setActiveProject: (projectId: string) => void;
-    getProjectInstructions: (
-      projectId: string,
-      projectRoot: string
-    ) => Promise<string | undefined>;
-  }
+    getProjects: () => ProjectToolEntry[];
+    getMode: () => "project" | "shell";
+    getRuntimeContext: () => Promise<Record<string, unknown>>;
+  },
+  shellSessionId = "standalone",
+  getShellContextKey: () => string = () => getShellDefaultCwd()
 ): Promise<McpServer> {
   const server = new McpServer(
     {
@@ -73,17 +71,19 @@ export async function createMcpServer(
   applyToolProfile(server);
 
   registerFilesystemTools(server, getProjectRoot);
-  registerShellTools(server, getShellDefaultCwd, shellTimeout);
+  registerShellTools(server, getShellDefaultCwd, shellTimeout, shellSessionId, getShellContextKey);
   registerGitTools(server, getProjectRoot);
   registerContextTools(server, getProjectRoot);
   registerSkillTools(server, getActiveProject);
   registerProjectTools(
     server,
-    projectRuntime?.projects ?? [],
-    projectRuntime?.primaryProjectId ?? null,
+    projectRuntime?.getProjects ?? (() => []),
+    projectRuntime?.getMode ?? (() => getActiveProject() ? "project" : "shell"),
     getActiveProject,
-    projectRuntime?.setActiveProject ?? (() => {}),
-    projectRuntime?.getProjectInstructions ?? (async () => undefined)
+    projectRuntime?.getRuntimeContext ?? (async () => ({
+      mode: getActiveProject() ? "project" : "shell",
+      active_project_id: getActiveProject()?.id ?? null,
+    }))
   );
   registerRewindTools(server);
 
